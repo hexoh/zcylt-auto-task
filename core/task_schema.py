@@ -121,6 +121,8 @@ class TaskDef:
     source: str = ""
     #: 声明的总步骤数（顶层步骤）；0 = 未声明 = 不限，步数即 ``len(steps)``
     step_count: int = 0
+    #: 只给循环监控用：不进流程、不算进主页任务开关，只由 watcher 显式调用
+    watch_only: bool = False
 
     @property
     def title(self) -> str:
@@ -141,6 +143,8 @@ class TaskDef:
 class TaskSet:
     tasks: Dict[str, TaskDef] = field(default_factory=dict)
     flows: Dict[str, List[str]] = field(default_factory=dict)
+    #: 流程的中文显示名：{"daily": "每日任务"}；没有就回落到 key
+    flow_labels: Dict[str, str] = field(default_factory=dict)
     defaults: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_DEFAULTS))
     base_dir: str = ""
     source: str = ""
@@ -153,6 +157,14 @@ class TaskSet:
 
     def flow_names(self) -> List[str]:
         return list(self.flows.keys())
+
+    def watch_task_keys(self) -> List[str]:
+        """只由循环监控调用的任务（``watch_only: true``）。"""
+        return [key for key, task in self.tasks.items() if getattr(task, "watch_only", False)]
+
+    def flow_label(self, name: str) -> str:
+        """流程的显示名（中文），没配就回落到 key —— 界面只显示这个。"""
+        return self.flow_labels.get(name) or name
 
     def enabled_tasks(self) -> List[TaskDef]:
         return [t for t in self.tasks.values() if t.enabled]
@@ -505,6 +517,7 @@ def _parse_document(
     validator: _Validator,
     tasks: Dict[str, TaskDef],
     flows: Dict[str, List[str]],
+    flow_labels: Dict[str, str],
     defaults: Dict[str, float],
     warnings: List[str],
 ) -> None:
@@ -566,6 +579,7 @@ def _parse_document(
             enabled=enabled,
             source=source,
             step_count=declared,
+            watch_only=bool(body.get("watch_only", False)),
         )
 
     raw_flows = doc.get("flows") or {}
@@ -580,6 +594,17 @@ def _parse_document(
             validator.err(f"{source}: 流程名重复：{name}")
             continue
         flows[name] = list(keys)
+
+    # 流程中文名：只影响界面显示，多个文件可以各自补充，不冲突
+    raw_labels = doc.get("flow_labels") or {}
+    if not isinstance(raw_labels, dict):
+        validator.warn(f"{source}: flow_labels 必须是对象（流程名 → 中文名）")
+    else:
+        for name, label in raw_labels.items():
+            if not isinstance(label, str) or not label.strip():
+                validator.warn(f"{source}: flow_labels.{name} 必须是非空字符串，已忽略")
+                continue
+            flow_labels[str(name)] = label.strip()
 
     defaults.update(file_defaults)
     if skipped_enabled:
@@ -598,6 +623,7 @@ def load_tasks(
     validator = _Validator(base)
     tasks: Dict[str, TaskDef] = {}
     flows: Dict[str, List[str]] = {}
+    flow_labels: Dict[str, str] = {}
     defaults: Dict[str, float] = dict(DEFAULT_DEFAULTS)
     extra_warnings: List[str] = []
 
@@ -613,7 +639,9 @@ def load_tasks(
         except OSError as exc:
             raise TaskSchemaError([f"读取失败：{exc}"], source=file)
 
-        _parse_document(doc, file, validator, tasks, flows, defaults, extra_warnings)
+        _parse_document(
+            doc, file, validator, tasks, flows, flow_labels, defaults, extra_warnings
+        )
 
     # 流程引用检查
     for name, keys in flows.items():
@@ -629,6 +657,7 @@ def load_tasks(
     taskset = TaskSet(
         tasks=tasks,
         flows=flows,
+        flow_labels=flow_labels,
         defaults=defaults,
         base_dir=base,
         source=os.path.abspath(path),

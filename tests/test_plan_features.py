@@ -19,6 +19,8 @@ from core.task_plan import (  # noqa: E402
     ensure_plan,
     load_plan,
     save_plan,
+    set_task_enabled,
+    update_tasks,
 )
 from core.task_schema import load_tasks  # noqa: E402
 
@@ -137,12 +139,86 @@ def test_save_and_reload_roundtrip(tmp_path):
     assert plan.error == "" and plan.tasks == {"a": True} and plan.flow == "quick"
 
 
+# ---------------------------------------------------------------- 界面开关回写
+def test_set_task_enabled_writes_back_and_keeps_other_fields(tmp_path):
+    path = _write(
+        tmp_path,
+        {"version": 1, "flow": "daily", "tasks": {"a": True}, "points": {"a::s": ["p1"]}},
+    )
+    ok, message = set_task_enabled(path, "a", False)
+    assert ok is True and message == ""
+
+    doc = json.loads(open(path, encoding="utf-8").read())
+    assert doc["tasks"]["a"] is False
+    # 其它字段原样保留，不能被开关顺手抹掉
+    assert doc["flow"] == "daily"
+    assert doc["points"] == {"a::s": ["p1"]}
+    assert load_plan(path).is_enabled("a") is False
+
+
+def test_set_task_enabled_adds_missing_key(tmp_path):
+    path = _write(tmp_path, {"tasks": {"a": True}})
+    assert set_task_enabled(path, "b", False)[0] is True
+    doc = json.loads(open(path, encoding="utf-8").read())
+    assert doc["tasks"] == {"a": True, "b": False}
+
+
+def test_set_task_enabled_flattens_object_form(tmp_path):
+    """{"enabled": false} 这种旧写法，被开关点过之后收敛成纯 bool。"""
+    path = _write(tmp_path, {"tasks": {"a": {"enabled": False}}})
+    assert set_task_enabled(path, "a", True)[0] is True
+    doc = json.loads(open(path, encoding="utf-8").read())
+    assert doc["tasks"]["a"] is True
+    assert load_plan(path).is_enabled("a") is True
+
+
+def test_set_task_enabled_keeps_broken_json_untouched(tmp_path):
+    """文件语法错时宁可不写，也不能把用户手改到一半的内容覆盖掉。"""
+    broken = '{"tasks": {"a": true,}}'
+    path = _write(tmp_path, broken)
+    ok, message = set_task_enabled(path, "a", False)
+    assert ok is False and "JSON" in message
+    assert open(path, encoding="utf-8").read() == broken
+
+
+def test_set_task_enabled_missing_file(tmp_path):
+    ok, message = set_task_enabled(str(tmp_path / "nope.json"), "a", True)
+    assert ok is False and "不存在" in message
+
+
+def test_update_tasks_writes_many_in_one_go(tmp_path):
+    """「全部启用 / 全部停止」：一次读一次写，别的字段不动。"""
+    path = _write(tmp_path, {"version": 1, "tasks": {"a": True, "b": False}, "flow": "daily"})
+    ok, message = update_tasks(path, {"a": False, "b": True, "c": True})
+    assert ok is True and message == ""
+    doc = json.loads(open(path, encoding="utf-8").read())
+    assert doc["tasks"] == {"a": False, "b": True, "c": True}
+    assert doc["flow"] == "daily"
+    assert set(load_plan(path).enabled_keys(_TaskSet({k: _Task() for k in "abc"}))) == {"b", "c"}
+
+
+def test_update_tasks_with_empty_updates_is_a_noop(tmp_path):
+    path = _write(tmp_path, {"tasks": {"a": True}})
+    before = open(path, encoding="utf-8").read()
+    assert update_tasks(path, {}) == (True, "")
+    assert open(path, encoding="utf-8").read() == before
+
+
+def test_save_plan_leaves_no_temp_file(tmp_path):
+    path = str(tmp_path / "task_plan.json")
+    assert save_plan({"version": 1, "tasks": {"a": True}}, path) is True
+    assert os.path.isfile(path)
+    assert not os.path.exists(path + ".tmp")
+
+
 def test_real_taskset_can_be_enabled_end_to_end(tmp_path):
     """拿仓库里真实的 tasks/ 跑一遍：全部启用时的 key 顺序要和定义一致。"""
     taskset = load_tasks(os.path.join(ROOT, "tasks"), base_dir=ROOT)
     path = str(tmp_path / "task_plan.json")
     plan = ensure_plan(path, taskset, flow=taskset.flow_names()[0])
-    assert plan.enabled_keys(taskset) == list(taskset.tasks.keys())
+    # watch_only 的任务（红包这类）只由循环监控调用，不算进「本次跑哪些」
+    expected = [key for key, task in taskset.tasks.items() if not task.watch_only]
+    assert plan.enabled_keys(taskset) == expected
 
 
 # ---------------------------------------------------------------------- 开关
@@ -171,3 +247,47 @@ def test_disabled_reason_points_at_the_right_key():
     assert "features.modes.screen.enabled" in reason
     hidden = {"features": {"modes": {"screen": {"visible": False}}}}
     assert "visible" in features.disabled_reason(hidden, "modes", "screen")
+
+
+# ---------------------------------------------------------------------- 流程中文名
+def _task_doc(flows, labels=None, task_key="rest"):
+    doc = {
+        "version": 1,
+        "tasks": {task_key: {"desc": "休息", "steps": [{"action": "sleep", "seconds": 0.1}]}},
+        "flows": flows,
+    }
+    if labels is not None:
+        doc["flow_labels"] = labels
+    return doc
+
+
+def test_flow_labels_merge_and_fallback(tmp_path):
+    from core.task_schema import load_tasks
+
+    (tmp_path / "a.json").write_text(
+        json.dumps(_task_doc({"daily": ["rest"]}, {"daily": "每日任务"}), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "b.json").write_text(
+        json.dumps(
+            _task_doc({"quick": ["restQuick"]}, {"quick": "快速收菜"}, "restQuick"),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    taskset = load_tasks(str(tmp_path), base_dir=str(tmp_path))
+    assert taskset.flow_labels == {"daily": "每日任务", "quick": "快速收菜"}
+    assert taskset.flow_label("daily") == "每日任务"
+    # 没配中文名的流程回落到 key，界面不会出现空白
+    assert taskset.flow_label("unknownFlow") == "unknownFlow"
+
+
+def test_bad_flow_labels_warn_but_do_not_fail(tmp_path):
+    from core.task_schema import load_tasks
+
+    doc = _task_doc({"daily": ["rest"]}, {"daily": "", "quick": "快速收菜"})
+    (tmp_path / "a.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    taskset = load_tasks(str(tmp_path), base_dir=str(tmp_path))
+    assert taskset.flow_label("daily") == "daily"
+    assert taskset.flow_label("quick") == "快速收菜"
+    assert any("flow_labels" in warning for warning in taskset.warnings)

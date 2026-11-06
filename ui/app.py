@@ -15,12 +15,14 @@ import os
 import queue
 import subprocess
 import sys
+import threading
 import tkinter as tk
 from tkinter import filedialog
 from typing import List, Optional, Tuple
 
 import customtkinter as ctk
 
+from core.device import DeviceGate
 from core.devtools import dev_mode_source, resolve_dev_mode
 from core.features import (
     disabled_reason,
@@ -39,8 +41,10 @@ from core.task_plan import (
     ensure_plan,
     load_plan,
     save_plan,
+    update_tasks,
 )
 from core.task_schema import TaskSet, load_tasks
+from core.watcher import WatcherService, parse_rules
 from ui import theme as T
 from ui.home import HomePage
 from ui.settings import SettingsPage
@@ -73,7 +77,9 @@ class App(ctk.CTk):
             )
         self.active_mode = resolve_mode(self.config, self.config.get("mode"))
 
-        self.manager = TaskManager()
+        # 一把设备锁：主流程与循环监控互斥，避免点击序列互相打断
+        self.gate = DeviceGate()
+        self.manager = TaskManager(gate=self.gate)
         # 回调来自后台线程：先入队，回到主线程再改界面
         self._events: "queue.Queue[tuple]" = queue.Queue()
         self.manager.set_callbacks(
@@ -87,10 +93,19 @@ class App(ctk.CTk):
         self._alive = True
         self._tools_menu = None
         self._tools_bind = None
+        self._watch_tick = 0
+        self.watcher = WatcherService(
+            self.root_dir,
+            gate=self.gate,
+            on_log=lambda line: self._events.put(("log", line)),
+            is_busy=lambda: self.manager.is_running,
+        )
 
         ctk.set_appearance_mode("system")
         self.title(APP_TITLE)
-        self.geometry("1080x800")
+        # 日志区调高（见 ui/home.py 的 LOG_HEIGHT）后需要更多纵向空间；
+        # 但小屏幕上别把窗口撑出屏幕外，按屏幕高度收一收。
+        self.geometry(f"1080x{self._default_height()}")
         self.minsize(980, 700)
         self.configure(fg_color=T.BG)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -105,8 +120,19 @@ class App(ctk.CTk):
         self.after(40, self.show_home)
         self._schedule(100, self._drain_events)
         self._schedule(1500, self._watch_plan)
+        self._schedule(600, self._boot_watcher)
 
     # ------------------------------------------------------------------ 路径
+    def _default_height(self) -> int:
+        """首屏高度：任务计划 8 行 + 一块 200px 的日志区能同屏放下，又不超出屏幕。"""
+        try:
+            screen = int(self.winfo_screenheight())
+        except Exception:
+            screen = 0
+        if screen > 0:
+            return max(700, min(920, screen - 140))
+        return 920
+
     def _abs_path(self, path: str) -> str:
         path = str(path or "").strip()
         if not path:
@@ -265,6 +291,7 @@ class App(ctk.CTk):
         if home is not None:
             home.refresh()
         self.persist_config()
+        threading.Thread(target=self.sync_watcher, daemon=True).start()
 
     def _on_mode_blocked(self, mode: str):
         self.error("方案未启用", disabled_reason(self.config, "modes", mode))
@@ -279,6 +306,65 @@ class App(ctk.CTk):
         if settings is not None:
             return settings.collect_backend(mode)
         return dict(self.config.get(mode) or {})
+
+    # ------------------------------------------------------------------ 循环监控
+    def _boot_watcher(self):
+        """启动时若总开关是开的，后台把监控拉起来（adb connect 可能慢，别卡首屏）。"""
+        threading.Thread(target=self.sync_watcher, kwargs={"notify": True}, daemon=True).start()
+
+    def sync_watcher(self, restart: bool = True, notify: bool = False) -> bool:
+        """把 config.json 的规则/后端参数同步给监控，并按需起停。"""
+        cfg = self.config.get("watchers") or {}
+        rules, problems = parse_rules(cfg.get("rules") or [])
+        mode = self.active_mode or "adb"
+        backend_cfg = self._backend_config(mode)
+        self.watcher.configure(
+            rules,
+            mode=mode,
+            backend=backend_cfg,
+            taskset=self.taskset,
+            variables=self.config.get("variables") or {},
+            problems=problems,
+        )
+        if not cfg.get("enabled"):
+            if self.watcher.is_running:
+                self.watcher.stop("总开关已关闭")
+            return False
+
+        if self.watcher.is_running and not restart:
+            return True
+        was_running = self.watcher.is_running
+        ok, message = self.watcher.restart() if was_running else self.watcher.start()
+        if not ok and notify:
+            self._events.put(("log", f"循环监控未启动：{message}"))
+        return ok
+
+    def set_watchers_enabled(self, enabled: bool):
+        self.config.setdefault("watchers", {})["enabled"] = bool(enabled)
+        self.persist_config()
+        threading.Thread(target=self.sync_watcher, daemon=True).start()
+
+    def set_watch_rule(self, key: str, enabled: bool):
+        for rule in (self.config.get("watchers") or {}).get("rules") or []:
+            if str(rule.get("key") or "") == key:
+                rule["enabled"] = bool(enabled)
+                break
+        self.persist_config()
+        threading.Thread(target=self.sync_watcher, daemon=True).start()
+
+    def check_watch_now(self):
+        """手动检测一次（后台跑，界面不卡）。"""
+        home = self.pages.get("home")
+
+        def worker():
+            results = self.watcher.check_now()
+            for item in results:
+                score = item.get("score")
+                extra = f"（{score:.2f}）" if isinstance(score, (int, float)) else ""
+                self._events.put(("log", f"立即检测·{item['key']}：{item['note']}{extra}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+        return home
 
     # ------------------------------------------------------------------ 运行
     def build_run_config(self) -> Optional[dict]:
@@ -320,19 +406,58 @@ class App(ctk.CTk):
             "task_keys": enabled,
             "selection": self.plan.selection(),
             "variables": variables,
-            "notify": self.config.get("notify") or {},
             "dry_run": bool(overrides.get("dry_run")),
             "screenshot_on_fail": True,
             "repeat": max(1, int(self.config.get("repeat", 1) or 1)),
         }
 
     # ------------------------------------------------------------------ 计划
+    def set_plan_task(self, key: str, enabled: bool) -> bool:
+        """首页单个任务开关：改一行就落一次盘（实现见 :meth:`set_plan_tasks`）。"""
+        return self.set_plan_tasks({key: enabled})
+
+    def set_plan_tasks(self, updates: dict) -> bool:
+        """把一批任务开关写回 ``task_plan.json``，再重新读回内存。
+
+        界面不缓存开关状态，点一次就落盘一次，「界面显示」与「文件内容」始终是
+        同一份真相；外面用编辑器改完也一样会走 :meth:`_watch_plan` 自动重载。
+        写盘失败（文件语法错误 / 只读）就整件事作罢，由界面把开关拨回去。
+        """
+        if not updates:
+            return True
+        if self.manager.is_running:
+            self.error(
+                "任务执行中",
+                "请先停止当前任务，再切换任务开关。\n"
+                "运行中的任务清单是发车那一刻的快照，改计划不影响这一趟。",
+            )
+            return False
+        if not os.path.isfile(self._plan_path):
+            save_plan(
+                build_plan_document(
+                    self.taskset,
+                    flow=self.config.get("flow", ""),
+                    tasks_path=self._tasks_path_raw(),
+                ),
+                self._plan_path,
+            )
+        ok, message = update_tasks(self._plan_path, updates)
+        if not ok:
+            self.error(
+                "没能保存任务计划",
+                f"{message}\n文件：{self._display_path(self._plan_path)}",
+            )
+            return False
+        self.plan = load_plan(self._plan_path)
+        return True
+
     def reload_plan(self):
         if self.manager.is_running:
             self.error("任务执行中", "请先停止任务再重新载入配置")
             return
         self.plan = load_plan(self._plan_path)
         self._reload_taskset()
+        threading.Thread(target=self.sync_watcher, kwargs={"restart": True}, daemon=True).start()
         home = self.pages.get("home")
         if home is not None:
             home.refresh()
@@ -580,6 +705,11 @@ class App(ctk.CTk):
                     home.append(payload)
             elif kind == "finish":
                 self._on_task_finish(payload)
+        self._watch_tick = (self._watch_tick + 1) % 5
+        if self._watch_tick == 0:
+            home = self.pages.get("home")
+            if home is not None:
+                home.update_watch(self.watcher.state())
         self._schedule(100, self._drain_events)
 
     def _refresh_status(self, status: TaskStatus):
@@ -643,6 +773,10 @@ class App(ctk.CTk):
 
     def _on_close(self):
         self._alive = False
+        try:
+            self.watcher.stop("界面关闭")
+        except Exception:
+            pass
         self.persist_config()
         if self.manager.is_running:
             self.manager.stop()

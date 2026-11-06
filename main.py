@@ -84,7 +84,6 @@ def cmd_run(args) -> int:
     from core.backends import create_backend
     from core.errors import TaskSchemaError
     from core.logger import Logger
-    from core.notifier import Notifier
     from core.runner import Runner
     from core.task_plan import load_plan
     from core.task_schema import load_tasks
@@ -189,12 +188,6 @@ def cmd_run(args) -> int:
         except Exception:
             pass
 
-    if report is not None and args.notify_type != "none":
-        Notifier(
-            {"type": args.notify_type, "url": args.notify_url, "sendkey": args.notify_url},
-            logger,
-        ).send("这城有良田 · 命令行执行结果", report.summary)
-
     if report is None:
         return 1
     print(f"\n{report.summary}\n日志：{logger.path}")
@@ -267,8 +260,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="点位勾选：任务key::步骤id=点位id1,点位id2（可重复），缺省按 default_selected",
     )
-    run.add_argument("--notify-type", choices=["none", "wecom", "serverchan", "webhook"], default="none")
-    run.add_argument("--notify-url", default="", help="Webhook 地址或 SendKey")
     run.add_argument("--log-level", choices=["debug", "info", "warn", "error"], default="info")
 
     adder = sub.add_parser("adder", help="任务添加器（开发者）：录任务、生成 tasks/*.json")

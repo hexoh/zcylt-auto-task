@@ -8,8 +8,10 @@
     tasks/*.json   任务怎么跑（步骤、识图、点位定义）
     task_plan.json 这次跑哪些（开关、点位、流程、变量）
 
-界面不再自己存勾选状态——它读这份 JSON。用编辑器改 true/false，存盘后界面自动重载，
-因此「界面看到的」和「文件里写的」永远一致，不存在两套状态谁覆盖谁的问题。
+界面不自己存勾选状态——它读这份 JSON。两种改法通向同一份文件：
+用编辑器改 true/false（存盘后界面自动重载），或在首页点任务行右侧的开关
+（走 :func:`set_task_enabled` 立刻写回）。因此「界面看到的」和「文件里写的」
+永远一致，不存在两套状态谁覆盖谁的问题。
 
 字段（全部可选，缺省见 :data:`PLAN_COMMENT`）
 --------------------------------------------
@@ -17,7 +19,8 @@
 ``tasks_path``   任务定义文件或目录，空 = 用 ``config.json`` 的 ``tasks_path``
 ``flow``         默认流程名，空 = 用 ``config.json`` 的 ``flow``
 ``dry_run``      演练模式，``null`` = 由界面开关决定
-``tasks``        ``{"任务key": true/false}``；没写的任务沿用任务定义里的 ``enabled``
+``tasks``        ``{"任务key": true/false}``；没写的任务沿用任务定义里的 ``enabled``。
+                 首页每一行右侧的开关就是改这一项，点完立刻写回文件
 ``points``       ``{"任务key::步骤id": ["点位id", ...]}``，留空 = 按任务定义的 default_selected
 ``variables``    运行时变量（如 ``redeem_code``）
 """
@@ -34,7 +37,8 @@ DEFAULT_PLAN_FILE = "task_plan.json"
 
 PLAN_COMMENT = (
     "任务计划：首页「任务计划」卡片就是读这份文件。"
-    "tasks 里 true=启用、false=关闭，没写的任务沿用任务定义里的 enabled；"
+    "tasks 里 true=启用、false=停止，没写的任务沿用任务定义里的 enabled；"
+    "界面上的开关也是改这里（点一下立刻写回本文件）；"
     "points 控制 tap_list 点位，格式 {\"任务key::步骤id\": [\"点位id\", ...]}，"
     "留空则按任务定义的 default_selected；"
     "改完存盘，界面会自动重新载入（也可以点卡片上的「重新载入」）。"
@@ -64,10 +68,12 @@ class TaskPlan:
         return bool(default) if value is None else bool(value)
 
     def enabled_keys(self, taskset) -> List[str]:
+        """本次要跑的任务；``watch_only`` 的（监控专用）永远不算进来。"""
         return [
             key
             for key, task in taskset.tasks.items()
-            if self.is_enabled(key, getattr(task, "enabled", True))
+            if not getattr(task, "watch_only", False)
+            and self.is_enabled(key, getattr(task, "enabled", True))
         ]
 
     def selection(self) -> Dict[str, List[str]]:
@@ -80,7 +86,11 @@ class TaskPlan:
 
     def unlisted_task_keys(self, taskset) -> List[str]:
         """任务定义里有、计划里没写的 key（沿用任务自身 enabled）。"""
-        return [key for key in taskset.tasks if key not in self.tasks]
+        return [
+            key
+            for key, task in taskset.tasks.items()
+            if key not in self.tasks and not getattr(task, "watch_only", False)
+        ]
 
     def point_stats(self, groups: List[dict]) -> Tuple[int, int]:
         """``(点位数, 已勾数)``，用于首页一行摘要。"""
@@ -231,15 +241,71 @@ def build_plan_document(
 
 
 def save_plan(document: dict, path: str) -> bool:
-    """写回计划文件（保持中文可读、缩进统一）。"""
+    """写回计划文件（保持中文可读、缩进统一）。
+
+    先写同目录临时文件再 ``os.replace`` 覆盖：界面开关每点一次就写一回盘，
+    写到一半被中断（或者同时被编辑器打开）也不会留下半截 JSON。
+    """
+    tmp_path = f"{path}.tmp"
     try:
         os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fp:
+        with open(tmp_path, "w", encoding="utf-8") as fp:
             json.dump(document, fp, ensure_ascii=False, indent=2)
             fp.write("\n")
+        os.replace(tmp_path, path)
         return True
     except OSError:
+        try:
+            if os.path.isfile(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
         return False
+
+
+def update_tasks(path: str, updates: Dict[str, bool]) -> Tuple[bool, str]:
+    """一次读、一次写，把若干任务的开关写回计划文件。
+
+    其它字段和书写顺序原样保留；返回 ``(是否成功, 失败原因)``。
+    文件读不了（语法错误 / 结构不对）时**不写**——宁可这次不生效，
+    也不能把用户手改到一半的计划覆盖掉。
+    """
+    if not updates:
+        return True, ""
+    if not os.path.isfile(path):
+        return False, "计划文件不存在"
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fp:
+            doc = json.load(fp)
+    except json.JSONDecodeError as exc:
+        return False, f"JSON 语法错误：第 {exc.lineno} 行第 {exc.colno} 列，{exc.msg}"
+    except OSError as exc:
+        return False, f"读取失败：{exc}"
+
+    if not isinstance(doc, dict):
+        return False, "顶层必须是一个对象：{ \"version\": 1, ... }"
+
+    tasks = doc.get("tasks")
+    if tasks is None:
+        tasks = {}
+    elif not isinstance(tasks, dict):
+        return False, "tasks 必须是对象：{\"任务key\": true/false}"
+    for key, enabled in updates.items():
+        if str(key):
+            # 统一写成 bool，顺手把 {"enabled": false} 这种旧写法收敛掉
+            tasks[str(key)] = bool(enabled)
+    doc["tasks"] = tasks
+
+    if not save_plan(doc, path):
+        return False, "写入失败，检查文件是否只读或被其它程序占用"
+    return True, ""
+
+
+def set_task_enabled(path: str, key: str, enabled: bool) -> Tuple[bool, str]:
+    """单个任务的开关（界面每一行的开关走这里）。"""
+    if not key:
+        return False, "任务 key 为空"
+    return update_tasks(path, {str(key): bool(enabled)})
 
 
 def ensure_plan(

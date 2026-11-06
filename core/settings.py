@@ -36,7 +36,28 @@ DEFAULT_CONFIG = {
         "follow_window": True,
     },
     "variables": {"redeem_code": ""},
-    "notify": {"type": "none", "url": "", "sendkey": ""},
+    # 循环监控（方案 A：主流程空闲时按间隔巡检，命中就跑指定任务）
+    "watchers": {
+        "enabled": False,
+        "rules": [
+            {
+                "key": "redPacket",
+                "name": "红包",
+                "enabled": True,
+                "interval_seconds": 300,
+                "task": "claimRedPacket",
+                "template": "templates/event/red_packet.png",
+                "threshold": 0.85,
+                "confirm_frames": 2,
+                "cooldown_seconds": 600,
+                "max_per_hour": 6,
+                "region": None,
+                "jitter_seconds": 5,
+                "grayscale": True,
+                "multiscale": False,
+            }
+        ],
+    },
     # 兼容旧配置：点位勾选曾存在这里，现在由 task_plan.json 的 points 接管
     "selection": {},
 }

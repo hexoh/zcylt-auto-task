@@ -73,7 +73,7 @@ class StatTile(ctk.CTkFrame):
         options.update(kwargs)
         super().__init__(master, **options)
         inner = ctk.CTkFrame(self, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=14, pady=(8, 7))
+        inner.pack(fill="both", expand=True, padx=14, pady=(7, 6))
         self._value = ctk.CTkLabel(
             inner,
             text=value,

@@ -157,6 +157,11 @@
       ]
     }
   },
+  "flow_labels": {
+    "daily": "每日任务",
+    "quick": "快速收菜",
+    "redeem": "兑换码兑换"
+  },
   "flows": {
     "daily": [
       "collectTax",

@@ -1,0 +1,60 @@
+{
+  "_comment": "事件类任务：只由「循环监控」（core/watcher.py）调用，不会进日常流程。watch_only=true 让它们不出现在首页任务开关里。模板需要实拍：templates/event/red_packet.png / panel_packet.png / btn_open.png。",
+  "version": 1,
+  "defaults": {
+    "interval": 0.6,
+    "timeout": 6,
+    "threshold": 0.85,
+    "after": 0.5
+  },
+  "tasks": {
+    "claimRedPacket": {
+      "desc": "领取红包",
+      "watch_only": true,
+      "steps": [
+        {
+          "id": "tapPacket",
+          "comment": "点红包本体（监控已确认它出现过，这里只补一次定位）",
+          "action": "image_tap",
+          "template": "templates/event/red_packet.png",
+          "timeout": 3,
+          "on_fail": "abort",
+          "after": 0.8
+        },
+        {
+          "id": "waitPanel",
+          "comment": "领取弹窗出现才继续，避免点了没反应还往下走",
+          "action": "wait_image",
+          "template": "templates/event/panel_packet.png",
+          "timeout": 4,
+          "on_fail": "continue"
+        },
+        {
+          "id": "open",
+          "comment": "「開 / 拆 / 领取」按钮",
+          "action": "image_tap",
+          "template": "templates/event/btn_open.png",
+          "timeout": 3,
+          "on_fail": "continue",
+          "after": 0.8
+        },
+        {
+          "id": "closePanel",
+          "action": "image_tap",
+          "template": "templates/ui/btn_close.png",
+          "timeout": 2,
+          "on_fail": "continue",
+          "after": 0.6
+        },
+        {
+          "id": "backHome",
+          "comment": "领完必须回主城：下一轮巡检和主流程都要一个确定的初始画面",
+          "action": "call",
+          "task": "backHome",
+          "on_fail": "continue"
+        }
+      ]
+    }
+  },
+  "flows": {}
+}

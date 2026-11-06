@@ -1,7 +1,7 @@
 """任务调度：在后台线程里跑整套流程，UI 只管开始/停止和收日志。
 
 线程模型：``start()`` 起一个 daemon 线程，线程内完成
-「建日志 → 加载 JSON → 连后端 → 跑 flow → 收尾通知」，
+「建日志 → 加载 JSON → 连后端 → 跑 flow → 收尾」，
 状态变化通过回调抛给 UI，日志同理（UI 侧用队列转主线程）。
 """
 
@@ -14,8 +14,8 @@ from enum import Enum
 from typing import Callable, List, Optional
 
 from .backends import create_backend
+from .device import DeviceGate
 from .logger import Logger
-from .notifier import Notifier
 from .runner import RunReport, Runner
 from .task_schema import load_tasks
 from .vision import TemplateMatcher
@@ -34,7 +34,9 @@ FinishCallback = Callable[[Optional[RunReport]], None]
 
 
 class TaskManager:
-    def __init__(self):
+    def __init__(self, gate: Optional[DeviceGate] = None):
+        # 与循环监控共用一把设备锁：谁拿到谁才能动鼠标键盘
+        self.gate = gate or DeviceGate()
         self._status = TaskStatus.IDLE
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
@@ -109,6 +111,24 @@ class TaskManager:
 
     # ------------------------------------------------------------------ 执行
     def _worker(self, config: dict) -> None:
+        """线程入口：先占住设备，再跑流程。"""
+        if self.gate.busy:
+            self._emit_log(f"设备正被「{self.gate.owner}」占用，等待空闲…")
+        with self.gate.hold("主流程", timeout=float(config.get("gate_timeout", 30))) as locked:
+            if not locked:
+                self._emit_log("设备被循环监控占用，本次未启动，请稍后重试")
+                with self._lock:
+                    self._set_status(TaskStatus.IDLE)
+                cb = self.on_finish
+                if cb:
+                    try:
+                        cb(None)
+                    except Exception:
+                        pass
+                return
+            self._run(config)
+
+    def _run(self, config: dict) -> None:
         report: Optional[RunReport] = None
         backend = None
         root = config.get("root") or os.getcwd()
@@ -182,7 +202,7 @@ class TaskManager:
 
             report = reports[-1] if reports else RunReport().finish()
 
-        except Exception as exc:  # 任何异常都要落到状态和通知里
+        except Exception as exc:  # 任何异常都要落到状态和日志里
             msg = f"{type(exc).__name__}: {exc}"
             if self.logger:
                 self.logger.error(msg)
@@ -201,11 +221,6 @@ class TaskManager:
             self.report = report
             with self._lock:
                 self._set_status(TaskStatus.IDLE)
-            if report is not None:
-                notifier = Notifier(config.get("notify") or {}, self.logger)
-                if notifier.enabled:
-                    title = "这城有良田 · 任务完成" if report.ok else "这城有良田 · 任务异常"
-                    notifier.send_async(title, report.summary)
             cb = self.on_finish
             if cb:
                 try:

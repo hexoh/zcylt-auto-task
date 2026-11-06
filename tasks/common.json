@@ -82,6 +82,9 @@
       ]
     }
   },
+  "flow_labels": {
+    "prepare": "进场准备"
+  },
   "flows": {
     "prepare": ["closePopups", "backHome"]
   }
