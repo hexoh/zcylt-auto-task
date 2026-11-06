@@ -242,3 +242,12 @@ $RECYCLE.BIN/
 *.msm
 *.msp
 *.lnk
+
+# 本工具产生的运行时数据
+config.json
+logs/
+.tmp/
+.pytest_cache/
+
+# workbuddy
+.workbuddy/*

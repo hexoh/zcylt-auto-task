@@ -1,7 +1,13 @@
 customtkinter>=5.2.2
 opencv-python>=4.9.0
+numpy>=1.26.0
 Pillow>=10.0.0
 pyautogui>=0.9.54
 pynput>=1.7.7
 mss>=9.0.0
 pygetwindow>=0.0.9
+pyperclip>=1.8.2
+
+# macOS 上 pyautogui 依赖 Quartz（Windows / Linux 自动跳过）
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+pyobjc-framework-ApplicationServices>=10.0; sys_platform == "darwin"

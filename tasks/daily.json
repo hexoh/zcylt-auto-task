@@ -1,0 +1,177 @@
+{
+  "_comment": "每日任务流。所有 template 都需要用任务添加器从真实画面截图，模板图分辨率必须与运行截图一致。",
+  "version": 1,
+  "defaults": {
+    "interval": 0.8,
+    "timeout": 10,
+    "threshold": 0.85,
+    "after": 0.5
+  },
+  "tasks": {
+    "collectTax": {
+      "desc": "税收收取",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "openTax", "action": "image_tap", "template": "templates/func/tax_icon.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "waitPanel", "action": "wait_image", "template": "templates/panel/tax_panel.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "collectAll", "action": "image_tap", "template": "templates/ui/btn_collect_all.png", "times": 2, "interval": 1.5, "on_fail": "continue"},
+        {"id": "confirm", "action": "exists", "template": "templates/ui/btn_confirm.png", "timeout": 1.5, "then": [{"action": "image_tap", "template": "templates/ui/btn_confirm.png"}]},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    },
+    "govAffairs": {
+      "desc": "政务处理",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "open", "action": "image_tap", "template": "templates/func/gov_icon.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "waitPanel", "action": "wait_image", "template": "templates/panel/gov_panel.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "dispatch", "action": "image_tap", "template": "templates/ui/btn_auto_dispatch.png", "times": 3, "interval": 1.5, "on_fail": "continue"},
+        {"id": "confirm", "action": "exists", "template": "templates/ui/btn_confirm.png", "timeout": 2, "then": [{"action": "image_tap", "template": "templates/ui/btn_confirm.png", "times": 2, "interval": 1.2}]},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    },
+    "buildingUpgrade": {
+      "desc": "建筑升级",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "open", "action": "image_tap", "template": "templates/func/build_icon.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "waitPanel", "action": "wait_image", "template": "templates/panel/build_panel.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "upgradeLoop", "comment": "能升就升，队列满了会没有升级按钮，直接退出循环", "action": "loop", "count": 6, "do": [
+          {"action": "exists", "template": "templates/ui/btn_upgrade.png", "timeout": 1.2, "then": [
+            {"action": "image_tap", "template": "templates/ui/btn_upgrade.png", "after": 1.0},
+            {"action": "exists", "template": "templates/ui/btn_confirm.png", "timeout": 1.5, "then": [
+              {"action": "image_tap", "template": "templates/ui/btn_confirm.png", "after": 1.0}
+            ], "else": [
+              {"action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.6}
+            ]}
+          ]}
+        ]},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    },
+    "porridge": {
+      "desc": "施粥活动",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "open", "action": "image_tap", "template": "templates/func/porridge_icon.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "waitPanel", "action": "wait_image", "template": "templates/panel/porridge_panel.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "give", "action": "image_tap", "template": "templates/ui/btn_porridge.png", "times": 3, "interval": 1.8, "on_fail": "continue"},
+        {"id": "confirm", "action": "exists", "template": "templates/ui/btn_confirm.png", "timeout": 2, "then": [{"action": "image_tap", "template": "templates/ui/btn_confirm.png"}]},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    },
+    "countySchool": {
+      "desc": "县学传业",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "open", "action": "image_tap", "template": "templates/func/school_icon.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "waitPanel", "action": "wait_image", "template": "templates/panel/school_panel.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "teach", "action": "image_tap", "template": "templates/ui/btn_teach.png", "times": 2, "interval": 1.5, "on_fail": "continue"},
+        {"id": "confirm", "action": "exists", "template": "templates/ui/btn_confirm.png", "timeout": 2, "then": [{"action": "image_tap", "template": "templates/ui/btn_confirm.png"}]},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    },
+    "recruit": {
+      "desc": "招贤任务",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "open", "action": "image_tap", "template": "templates/func/recruit_icon.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "waitPanel", "action": "wait_image", "template": "templates/panel/recruit_panel.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "recruitOnce", "action": "image_tap", "template": "templates/ui/btn_recruit_free.png", "timeout": 5, "on_fail": "continue"},
+        {"id": "confirm", "action": "exists", "template": "templates/ui/btn_confirm.png", "timeout": 2, "then": [{"action": "image_tap", "template": "templates/ui/btn_confirm.png"}]},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    },
+    "patrol": {
+      "desc": "巡视任务",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "open", "action": "image_tap", "template": "templates/func/patrol_icon.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "waitPanel", "action": "wait_image", "template": "templates/panel/patrol_panel.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "dispatch", "action": "image_tap", "template": "templates/ui/btn_auto_dispatch.png", "times": 2, "interval": 1.5, "on_fail": "continue"},
+        {"id": "confirm", "action": "exists", "template": "templates/ui/btn_confirm.png", "timeout": 2, "then": [{"action": "image_tap", "template": "templates/ui/btn_confirm.png"}]},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    },
+    "bandit": {
+      "desc": "不良司缉盗",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "open", "action": "image_tap", "template": "templates/func/bandit_icon.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "waitPanel", "action": "wait_image", "template": "templates/panel/bandit_panel.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "fight", "action": "image_tap", "template": "templates/ui/btn_fight.png", "times": 3, "interval": 2.0, "on_fail": "continue"},
+        {"id": "confirm", "action": "exists", "template": "templates/ui/btn_confirm.png", "timeout": 2, "then": [{"action": "image_tap", "template": "templates/ui/btn_confirm.png"}]},
+        {"id": "closeAll", "action": "call", "task": "closePopups", "on_fail": "continue"},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    },
+    "arena": {
+      "desc": "以武会友",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "open", "action": "image_tap", "template": "templates/func/arena_icon.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "waitPanel", "action": "wait_image", "template": "templates/panel/arena_panel.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "challenge", "action": "image_tap", "template": "templates/ui/btn_challenge.png", "times": 3, "interval": 2.5, "on_fail": "continue"},
+        {"id": "confirm", "action": "exists", "template": "templates/ui/btn_confirm.png", "timeout": 2, "then": [{"action": "image_tap", "template": "templates/ui/btn_confirm.png"}]},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    },
+    "mainQuest": {
+      "desc": "主线任务推进",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "questLoop", "comment": "点主线追踪面板的「前往」，直到没有可推进的主线", "action": "loop", "count": 5, "do": [
+          {"action": "exists", "template": "templates/func/quest_trace.png", "timeout": 1.5, "then": [
+            {"action": "image_tap", "template": "templates/func/quest_trace.png", "after": 1.2},
+            {"action": "wait_image", "template": "templates/ui/btn_go.png", "timeout": 4, "on_fail": "continue"},
+            {"action": "image_tap", "template": "templates/ui/btn_go.png", "on_fail": "continue", "after": 1.5},
+            {"action": "call", "task": "closePopups"}
+          ], "else": [
+            {"action": "sleep", "seconds": 0.5}
+          ]}
+        ]}
+      ]
+    },
+    "claimRewards": {
+      "desc": "领取奖励",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "questReward", "action": "image_tap", "template": "templates/func/reward_icon.png", "timeout": 5, "on_fail": "continue"},
+        {"id": "claimLoop", "comment": "列表里能领的全部领掉", "action": "loop", "count": 6, "do": [
+          {"action": "exists", "template": "templates/ui/btn_claim.png", "timeout": 0.8, "then": [
+            {"action": "image_tap", "template": "templates/ui/btn_claim.png", "after": 0.8}
+          ]}
+        ]},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    },
+    "redeemCode": {
+      "desc": "兑换码兑换",
+      "steps": [
+        {"id": "home", "action": "call", "task": "backHome", "on_fail": "next_task"},
+        {"id": "openSetting", "action": "image_tap", "template": "templates/ui/btn_setting.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "openRedeem", "action": "image_tap", "template": "templates/ui/btn_redeem.png", "timeout": 8, "on_fail": "next_task"},
+        {"id": "inputCode", "comment": "兑换码在 UI / CLI 变量 redeem_code 里填", "action": "text", "value": "${redeem_code}"},
+        {"id": "submit", "action": "image_tap", "template": "templates/ui/btn_confirm.png", "timeout": 5, "on_fail": "next_task"},
+        {"id": "close", "action": "image_tap", "template": "templates/ui/btn_close.png", "on_fail": "continue", "after": 0.8}
+      ]
+    }
+  },
+  "flows": {
+    "daily": [
+      "collectTax",
+      "govAffairs",
+      "buildingUpgrade",
+      "porridge",
+      "countySchool",
+      "recruit",
+      "patrol",
+      "bandit",
+      "arena",
+      "mainQuest",
+      "claimRewards"
+    ],
+    "quick": ["collectTax", "claimRewards"],
+    "redeem": ["redeemCode"]
+  }
+}

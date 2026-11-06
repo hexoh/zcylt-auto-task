@@ -1,0 +1,88 @@
+{
+  "_comment": "公共原子任务：回主城、清弹窗、领奖励。模板图需用 tools/picker.py 从实际画面截图后放到 templates/ 对应目录。",
+  "version": 1,
+  "defaults": {
+    "interval": 0.8,
+    "timeout": 10,
+    "threshold": 0.85,
+    "after": 0.5
+  },
+  "tasks": {
+    "closePopups": {
+      "desc": "关闭弹窗",
+      "steps": [
+        {
+          "id": "closeLoop",
+          "comment": "连续关 3 层弹窗，没有就跳过",
+          "action": "loop",
+          "count": 3,
+          "do": [
+            {
+              "action": "exists",
+              "template": "templates/ui/btn_close.png",
+              "timeout": 0.8,
+              "threshold": 0.8,
+              "then": [
+                {
+                  "action": "image_tap",
+                  "template": "templates/ui/btn_close.png",
+                  "after": 0.8
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "backHome": {
+      "desc": "返回主城",
+      "steps": [
+        {
+          "id": "clean",
+          "action": "call",
+          "task": "closePopups"
+        },
+        {
+          "id": "backKey",
+          "comment": "安卓常用返回键退弹窗，PC 端映射为 Esc",
+          "action": "keyevent",
+          "key": "back",
+          "times": 2,
+          "interval": 0.8,
+          "on_fail": "continue",
+          "after": 0.5
+        },
+        {
+          "id": "tapHome",
+          "comment": "点击主界面的「主城/家园」入口",
+          "action": "image_tap",
+          "template": "templates/ui/btn_home.png",
+          "timeout": 3,
+          "on_fail": "continue"
+        },
+        {
+          "id": "waitCity",
+          "action": "wait_image",
+          "template": "templates/scene/main_city.png",
+          "timeout": 12,
+          "on_fail": "next_task"
+        }
+      ]
+    },
+    "closePanel": {
+      "desc": "关闭当前面板",
+      "steps": [
+        {
+          "action": "image_tap",
+          "template": "templates/ui/btn_close.png",
+          "timeout": 2,
+          "on_fail": "continue",
+          "after": 0.8
+        }
+      ]
+    }
+  },
+  "flows": {
+    "prepare": ["closePopups", "backHome"]
+  }
+}

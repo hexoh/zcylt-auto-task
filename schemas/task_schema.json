@@ -1,0 +1,170 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "这城有良田 自动任务配置",
+  "description": "tasks/*.json 的结构定义，用于编辑器补全与校验。tasks 按 key 定义原子任务，flows 按 key 组合执行顺序。",
+  "type": "object",
+  "required": ["tasks"],
+  "additionalProperties": true,
+  "properties": {
+    "version": { "const": 1 },
+    "_comment": { "type": "string" },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "interval": { "type": "number", "minimum": 0, "description": "点击/重复的间隔秒数" },
+        "timeout": { "type": "number", "minimum": 0, "description": "识图等待超时秒数" },
+        "threshold": { "type": "number", "minimum": 0, "maximum": 1, "description": "模板匹配阈值" },
+        "after": { "type": "number", "minimum": 0, "description": "每步执行后的固定等待" }
+      }
+    },
+    "tasks": {
+      "type": "object",
+      "description": "任务 key → 任务定义",
+      "additionalProperties": { "$ref": "#/definitions/task" }
+    },
+    "flows": {
+      "type": "object",
+      "description": "流程 key → 任务 key 数组",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  },
+  "definitions": {
+    "task": {
+      "type": "object",
+      "required": ["steps"],
+      "additionalProperties": false,
+      "properties": {
+        "desc": { "type": "string", "description": "中文说明，UI 上显示" },
+        "name": { "type": "string" },
+        "enabled": { "type": "boolean", "default": true },
+        "step_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "声明的总步骤数（顶层步骤，不含 loop/exists 内部）。省略 = 不限步数；声明后 steps 长度必须相等"
+        },
+        "steps": { "type": "array", "items": { "$ref": "#/definitions/step" } }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["action"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "description": "日志定位用" },
+        "comment": { "type": "string" },
+        "action": {
+          "enum": [
+            "tap",
+            "image_tap",
+            "tap_list",
+            "swipe",
+            "text",
+            "keyevent",
+            "sleep",
+            "wait_image",
+            "wait_gone",
+            "exists",
+            "call",
+            "loop",
+            "launch",
+            "kill"
+          ]
+        },
+        "times": { "type": "integer", "minimum": 1, "description": "点击次数 / 重复次数" },
+        "interval": { "type": "number", "minimum": 0, "description": "每次重复的间隔秒数" },
+        "timeout": { "type": "number", "minimum": 0, "description": "识图等待超时秒数" },
+        "after": { "type": "number", "minimum": 0, "description": "本步执行后的固定等待" },
+        "on_fail": { "enum": ["continue", "abort", "next_task"] },
+
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "x1": { "type": "number" },
+        "y1": { "type": "number" },
+        "x2": { "type": "number" },
+        "y2": { "type": "number" },
+        "coord": {
+          "enum": ["rel1000", "window", "abs"],
+          "default": "rel1000",
+          "description": "rel1000 为 0-1000 相对坐标，换分辨率不用改"
+        },
+        "duration": { "type": "integer", "minimum": 1, "description": "滑动时长（毫秒）" },
+
+        "template": { "type": "string", "description": "模板图相对路径，如 templates/ui/btn_home.png" },
+        "threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+        "offset": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "click": { "type": "boolean", "default": true },
+        "all": { "type": "boolean", "description": "image_tap：点完画面上所有命中（按 y 再 x 排序）" },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "image_tap：all 时最多点几个；也作 find_all 的结果上限"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "image_tap：只点第 n 个命中（从 1 开始）"
+        },
+
+        "items": {
+          "type": "array",
+          "description": "tap_list：点位列表，每个点位可在界面上单独勾选",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "x", "y"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "description": "步骤内唯一，勾选与日志都靠它" },
+              "name": { "type": "string", "description": "显示名，如「第 1 个奖励」" },
+              "x": { "type": "number" },
+              "y": { "type": "number" }
+            }
+          }
+        },
+        "default_selected": {
+          "type": "boolean",
+          "default": true,
+          "description": "tap_list：未显式勾选时默认是否全选"
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "tap_list：本次最多点几个（防误点满屏）"
+        },
+        "multiscale": { "type": "boolean", "description": "多尺度匹配，慢但抗缩放" },
+        "scales": { "type": "array", "items": { "type": "number" } },
+        "grayscale": { "type": "boolean" },
+        "region": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "限定匹配区域 [x, y, w, h]（像素）"
+        },
+
+        "value": { "type": "string", "description": "text 的内容，支持 ${变量名}" },
+        "key": {
+          "type": "string",
+          "description": "keyevent：back/home/enter/menu/power/volume_up/volume_down/delete/tab/space/recent"
+        },
+        "seconds": { "type": "number", "minimum": 0 },
+
+        "then": { "type": "array", "items": { "$ref": "#/definitions/step" } },
+        "else": { "type": "array", "items": { "$ref": "#/definitions/step" } },
+        "task": { "type": "string", "description": "call 的子任务 key" },
+        "count": { "type": "integer", "minimum": 1 },
+        "do": { "type": "array", "items": { "$ref": "#/definitions/step" } },
+        "package": { "type": "string", "description": "launch/kill 的包名" }
+      }
+    }
+  }
+}
