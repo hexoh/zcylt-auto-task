@@ -1,0 +1,26 @@
+{
+  "_comment": "任务计划：首页「任务计划」卡片就是读这份文件。tasks 里 true=启用、false=关闭，没写的任务沿用任务定义里的 enabled；points 控制 tap_list 点位，格式 {\"任务key::步骤id\": [\"点位id\", ...]}，留空则按任务定义的 default_selected；改完存盘，界面会自动重新载入（也可以点卡片上的「重新载入」）。",
+  "version": 1,
+  "tasks_path": "tasks",
+  "flow": "daily",
+  "dry_run": null,
+  "tasks": {
+    "closePopups": true,
+    "backHome": true,
+    "closePanel": true,
+    "collectTax": true,
+    "govAffairs": true,
+    "buildingUpgrade": true,
+    "porridge": true,
+    "countySchool": true,
+    "recruit": true,
+    "patrol": true,
+    "bandit": true,
+    "arena": true,
+    "mainQuest": true,
+    "claimRewards": true,
+    "redeemCode": true
+  },
+  "points": {},
+  "variables": {}
+}

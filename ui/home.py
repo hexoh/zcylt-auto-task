@@ -3,6 +3,9 @@
 这里**不做任务勾选**——任务开关由 ``task_plan.json`` 决定（见 :mod:`core.task_plan`），
 界面只负责把 JSON 的状态如实展示出来，并提供「导入 / 编辑 / 重新载入」三个动作。
 好处是界面和文件永远一致，不会出现「界面勾了但文件没改」的两套状态。
+
+版式：上方一排概览数字，下面左右两栏——左栏任务计划（宽），右栏运行选项 + 点位摘要（窄），
+底部固定操作条与日志。刻意不做左侧导航栏，省掉一列。
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from core.features import is_enabled, is_visible
 from core.task_manager import TaskStatus
 from core.task_plan import TaskPlan
 from ui import theme as T
-from ui.widgets import Banner, Card, StatTile, Tag
+from ui.widgets import Banner, Card, StatTile, Tag, set_entry_text
 
 NOTIFY_LABELS = {
     "关闭": "none",
@@ -27,6 +30,9 @@ NOTIFY_LABELS = {
     "自定义 Webhook": "webhook",
 }
 NOTIFY_KEYS = {value: label for label, value in NOTIFY_LABELS.items()}
+
+# 左栏任务卡片的列数：15 个任务两列 8 行，一屏能看完
+TASK_COLUMNS = 2
 
 
 class HomePage(ctk.CTkFrame):
@@ -37,7 +43,6 @@ class HomePage(ctk.CTkFrame):
         self._log_queue: "queue.Queue[str]" = queue.Queue()
         self._alive = True
         self._flow_var = ctk.StringVar(value="")
-        self._notice_hint = ""
 
         self._build()
         self.bind("<Destroy>", self._on_destroy)
@@ -47,7 +52,7 @@ class HomePage(ctk.CTkFrame):
 
     # ------------------------------------------------------------------ 布局
     def _build(self):
-        # 底部两块先 pack，保证它们固定、不随内容滚动
+        # 底部两块先 pack，保证它们固定在窗口底部、不随内容滚动
         self._build_log_card()
         self._build_action_bar()
         self._build_scroll()
@@ -65,12 +70,25 @@ class HomePage(ctk.CTkFrame):
         inner.pack(fill="both", expand=True, padx=4, pady=(2, 0))
 
         self._build_stats(inner)
-        self._build_plan_card(inner)
-        self._build_run_card(inner)
+
+        body = ctk.CTkFrame(inner, fg_color="transparent")
+        body.pack(fill="both", expand=True)
+        body.grid_columnconfigure(0, weight=5)
+        body.grid_columnconfigure(1, weight=4, minsize=330)
+
+        left = ctk.CTkFrame(body, fg_color="transparent")
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, T.GAP_MD))
+        right = ctk.CTkFrame(body, fg_color="transparent")
+        right.grid(row=0, column=1, sticky="nsew")
+
+        self._build_plan_card(left)
+        self._build_run_card(right)
+        self._build_points_card(right)
+        self._build_templates_card(right)
 
     def _build_stats(self, parent):
         grid = ctk.CTkFrame(parent, fg_color="transparent")
-        grid.pack(fill="x", pady=(2, T.GAP_MD))
+        grid.pack(fill="x", pady=(0, T.GAP_MD))
         for column in range(4):
             grid.grid_columnconfigure(column, weight=1, uniform="stat")
 
@@ -91,17 +109,16 @@ class HomePage(ctk.CTkFrame):
     # ------------------------------------------------------------ 任务计划卡
     def _build_plan_card(self, parent):
         card = Card(parent, "任务计划", "开关与点位都写在 JSON 里")
+        card.pack(fill="both", expand=True)
         self.plan_card = card
 
-        T.ghost(
-            card.actions, "重新载入", self.app.reload_plan, height=28, width=86
-        ).pack(side="right", padx=(6, 0))
-        T.ghost(
-            card.actions, "编辑 JSON", self.app.open_plan_file, height=28, width=86
-        ).pack(side="right", padx=(6, 0))
-        T.ghost(
-            card.actions, "导入", self.app.import_plan, height=28, width=64
-        ).pack(side="right")
+        T.ghost(card.actions, "重新载入", self.app.reload_plan, height=28, width=86).pack(
+            side="right", padx=(6, 0)
+        )
+        T.ghost(card.actions, "编辑 JSON", self.app.open_plan_file, height=28, width=86).pack(
+            side="right", padx=(6, 0)
+        )
+        T.ghost(card.actions, "导入", self.app.import_plan, height=28, width=60).pack(side="right")
 
         self._plan_body = ctk.CTkFrame(card.body, fg_color="transparent")
         self._plan_body.pack(fill="x")
@@ -123,7 +140,7 @@ class HomePage(ctk.CTkFrame):
         ).pack(side="left")
         ctk.CTkLabel(
             meta,
-            text="改 true / false 存盘后自动重新载入",
+            text="true 启用 / false 关闭，存盘后自动重载",
             font=T.font(T.SIZE_TINY),
             text_color=T.TEXT_FAINT,
         ).pack(side="left", padx=(10, 0))
@@ -150,21 +167,19 @@ class HomePage(ctk.CTkFrame):
         if unknown and not plan.error:
             Banner(
                 self._plan_body,
-                f"计划里有 {len(unknown)} 个任务 key 在当前任务文件里不存在："
-                f"{'、'.join(unknown[:5])}{'…' if len(unknown) > 5 else ''}",
+                f"计划里有 {len(unknown)} 个 key 在当前任务文件里不存在："
+                f"{'、'.join(unknown[:4])}{'…' if len(unknown) > 4 else ''}",
                 "warn",
             ).pack(fill="x", pady=(0, T.GAP_SM))
 
         self._render_tasks(plan, taskset)
-        self._render_points(plan, taskset)
 
     def _plan_location(self, plan: TaskPlan) -> str:
         """显示相对项目根的路径，避免整条绝对路径撑满一行。"""
         if not plan.path:
             return ""
-        root = self.app.root_dir
         try:
-            relative = os.path.relpath(plan.path, root)
+            relative = os.path.relpath(plan.path, self.app.root_dir)
         except ValueError:
             return plan.path
         return plan.path if relative.startswith("..") else relative
@@ -181,22 +196,22 @@ class HomePage(ctk.CTkFrame):
 
         grid = ctk.CTkFrame(self._plan_body, fg_color="transparent")
         grid.pack(fill="x")
-        grid.grid_columnconfigure(0, weight=1, uniform="task")
-        grid.grid_columnconfigure(1, weight=1, uniform="task")
+        for column in range(TASK_COLUMNS):
+            grid.grid_columnconfigure(column, weight=1, uniform="task")
 
         for index, (key, task) in enumerate(tasks):
             enabled = plan.is_enabled(key, getattr(task, "enabled", True))
             row = self._task_row(grid, key, getattr(task, "desc", "") or key, enabled)
             row.grid(
-                row=index // 2,
-                column=index % 2,
+                row=index // TASK_COLUMNS,
+                column=index % TASK_COLUMNS,
                 sticky="ew",
-                padx=(0 if index % 2 == 0 else T.GAP_SM, 0),
-                pady=3,
+                padx=(0 if index % TASK_COLUMNS == 0 else T.GAP_SM, 0),
+                pady=2,
             )
 
     def _task_row(self, parent, key: str, desc: str, enabled: bool) -> ctk.CTkFrame:
-        row = ctk.CTkFrame(parent, fg_color=T.SURFACE_ALT, corner_radius=8, height=36)
+        row = ctk.CTkFrame(parent, fg_color=T.SURFACE_ALT, corner_radius=8, height=32)
         row.pack_propagate(False)
 
         ctk.CTkLabel(
@@ -229,41 +244,42 @@ class HomePage(ctk.CTkFrame):
             ).pack(side="right", padx=(6, 0))
         return row
 
-    def _render_points(self, plan: TaskPlan, taskset):
-        groups = taskset.point_groups()
+    # ------------------------------------------------------------ 点位摘要卡
+    def _build_points_card(self, parent):
+        self.points_card = Card(parent, "点位选择", "改 JSON 的 points 字段")
+        self.points_card.pack(fill="x", pady=(T.GAP_MD, 0))
+        self._points_body = ctk.CTkFrame(self.points_card.body, fg_color="transparent")
+        self._points_body.pack(fill="x")
+
+    def _render_points(self):
+        for widget in self._points_body.winfo_children():
+            widget.destroy()
+
+        groups = self.app.taskset.point_groups()
         if not groups:
+            self.points_card.pack_forget()
             return
+        if not self.points_card.winfo_manager():
+            self.points_card.pack(fill="x", pady=(T.GAP_MD, 0))
 
+        plan = self.app.plan
         total, picked = plan.point_stats(groups)
-        head = ctk.CTkFrame(self._plan_body, fg_color="transparent")
-        head.pack(fill="x", pady=(T.GAP_MD, 4))
+        summary = ctk.CTkFrame(self._points_body, fg_color="transparent")
+        summary.pack(fill="x", pady=(0, 2))
         ctk.CTkLabel(
-            head,
-            text="点位选择",
-            font=T.font(T.SIZE_BODY, "bold"),
-            text_color=T.TEXT,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            head,
-            text="改 JSON 的 points 字段，格式 任务key::步骤id → 点位 id 数组",
-            font=T.font(T.SIZE_TINY),
-            text_color=T.TEXT_FAINT,
-        ).pack(side="left", padx=(10, 0))
-        ctk.CTkLabel(
-            head,
-            text=f"共 {len(groups)} 组 · 已勾 {picked}/{total}",
-            font=T.font(T.SIZE_TINY),
+            summary,
+            text=f"共 {len(groups)} 组点位，已勾 {picked}/{total}",
+            font=T.font(T.SIZE_SMALL),
             text_color=T.TEXT_MUTED,
-        ).pack(side="right")
+            anchor="w",
+        ).pack(side="left")
 
-        grid = ctk.CTkFrame(self._plan_body, fg_color="transparent")
-        grid.pack(fill="x")
-        grid.grid_columnconfigure(0, weight=1, uniform="point")
-        grid.grid_columnconfigure(1, weight=1, uniform="point")
-        for index, group in enumerate(groups):
+        for group in groups:
             chosen = plan.chosen_points(group)
-            row = ctk.CTkFrame(grid, fg_color=T.SURFACE_ALT, corner_radius=8, height=32)
+            row = ctk.CTkFrame(self._points_body, fg_color=T.SURFACE_ALT, corner_radius=8, height=30)
             row.pack_propagate(False)
+            row.pack(fill="x", pady=2)
+
             name = group["task_title"]
             if group.get("step_name") and group["step_name"] != group["step_id"]:
                 name = f"{name} · {group['step_name']}"
@@ -273,53 +289,93 @@ class HomePage(ctk.CTkFrame):
                 font=T.font(T.SIZE_SMALL),
                 text_color=T.TEXT_MUTED if not chosen else T.TEXT,
                 anchor="w",
-            ).pack(side="left", padx=(11, 8), pady=6)
+            ).pack(side="left", padx=(10, 6), pady=5)
             ctk.CTkLabel(
                 row,
                 text=f"{len(chosen)}/{len(group['items'])}",
                 font=T.mono(T.SIZE_TINY),
                 text_color=T.SUCCESS if chosen else T.WARN,
-            ).pack(side="right", padx=(4, 11))
-            row.grid(
-                row=index // 2,
-                column=index % 2,
-                sticky="ew",
-                padx=(0 if index % 2 == 0 else T.GAP_SM, 0),
-                pady=3,
-            )
+            ).pack(side="right", padx=(4, 10))
+
+    # ------------------------------------------------------------ 模板状态卡
+    def _build_templates_card(self, parent):
+        self.templates_card = Card(parent, "模板图", "缺图会让相关步骤失败")
+        self.templates_card.pack(fill="x", pady=(T.GAP_MD, 0))
+        self._templates_body = ctk.CTkFrame(self.templates_card.body, fg_color="transparent")
+        self._templates_body.pack(fill="x")
+
+    def _render_templates(self):
+        for widget in self._templates_body.winfo_children():
+            widget.destroy()
+
+        missing = self.app.taskset.missing_templates
+        if not missing:
+            ctk.CTkLabel(
+                self._templates_body,
+                text="✔  模板图齐全",
+                font=T.font(T.SIZE_SMALL),
+                text_color=T.SUCCESS,
+                anchor="w",
+            ).pack(anchor="w")
+            return
+
+        first = missing[0]
+        ctk.CTkLabel(
+            self._templates_body,
+            text=f"缺失 {len(missing)} 张，如 {first}"
+            + (" 等" if len(missing) > 1 else "")
+            + "；相关步骤会失败，用任务添加器补拍。",
+            font=T.font(T.SIZE_SMALL),
+            text_color=T.WARN,
+            anchor="w",
+            justify="left",
+            wraplength=320,
+        ).pack(anchor="w")
 
     # ------------------------------------------------------------ 运行选项卡
     def _build_run_card(self, parent):
-        card = Card(parent, "运行选项", "只影响这一次运行，不改任务开关")
+        card = Card(parent, "运行选项", "只影响这一次运行")
+        card.pack(fill="x")
 
-        row1 = ctk.CTkFrame(card.body, fg_color="transparent")
-        row1.pack(fill="x", pady=(0, 2))
-        ctk.CTkLabel(
-            row1, text="流程", width=52, anchor="w", font=T.font(T.SIZE_BODY), text_color=T.TEXT_MUTED
-        ).pack(side="left")
-        self.flow_menu = T.option_menu(row1, ["—"], self._flow_var, width=150)
-        self.flow_menu.pack(side="left")
-        ctk.CTkLabel(
-            row1, text="兑换码", width=64, anchor="w", font=T.font(T.SIZE_BODY), text_color=T.TEXT_MUTED
-        ).pack(side="left", padx=(18, 0))
-        self.redeem_entry = T.entry(row1, placeholder_text="redeem_code，留空则不兑换")
-        self.redeem_entry.pack(side="left", fill="x", expand=True, padx=(0, 2))
+        form = ctk.CTkFrame(card.body, fg_color="transparent")
+        form.pack(fill="x")
+        form.grid_columnconfigure(1, weight=1)
 
-        row2 = ctk.CTkFrame(card.body, fg_color="transparent")
-        row2.pack(fill="x", pady=(6, 0))
-        self.dry_run_var = ctk.BooleanVar(value=bool(self.app.config.get("dry_run", False)))
-        T.switch(row2, "仅演练（不真实点击）", self.dry_run_var).pack(side="left")
         ctk.CTkLabel(
-            row2, text="通知", width=52, anchor="w", font=T.font(T.SIZE_BODY), text_color=T.TEXT_MUTED
-        ).pack(side="left", padx=(22, 0))
+            form, text="流程", anchor="w", font=T.font(T.SIZE_BODY), text_color=T.TEXT_MUTED
+        ).grid(row=0, column=0, sticky="w", pady=4)
+        self.flow_menu = T.option_menu(form, ["—"], self._flow_var, width=140)
+        self.flow_menu.grid(row=0, column=1, sticky="w", pady=4)
+
+        ctk.CTkLabel(
+            form, text="兑换码", anchor="w", font=T.font(T.SIZE_BODY), text_color=T.TEXT_MUTED
+        ).grid(row=1, column=0, sticky="w", pady=4)
+        self.redeem_entry = T.entry(form, placeholder_text="留空不兑换")
+        self.redeem_entry.grid(row=1, column=1, sticky="ew", pady=4)
+
+        ctk.CTkLabel(
+            form, text="通知", anchor="w", font=T.font(T.SIZE_BODY), text_color=T.TEXT_MUTED
+        ).grid(row=2, column=0, sticky="nw", pady=(4, 2))
         notify_cfg = self.app.config.get("notify") or {}
-        self.notify_menu = T.option_menu(row2, list(NOTIFY_LABELS), width=140, command=self._on_notify_change)
+        self.notify_menu = T.option_menu(
+            form, list(NOTIFY_LABELS), width=140, command=self._on_notify_change
+        )
         self.notify_menu.set(NOTIFY_KEYS.get(notify_cfg.get("type", "none"), "关闭"))
-        self.notify_menu.pack(side="left")
-        self.notify_entry = T.entry(row2, placeholder_text="Webhook 地址 / Server 酱 SendKey")
-        self.notify_entry.pack(side="left", fill="x", expand=True, padx=(8, 2))
-        self.notify_entry.insert(0, str(notify_cfg.get("url") or notify_cfg.get("sendkey") or ""))
+        self.notify_menu.grid(row=2, column=1, sticky="w", pady=(4, 2))
+
+        self.notify_entry = T.entry(form, placeholder_text="Webhook 地址 / SendKey")
+        self.notify_entry.grid(row=3, column=1, sticky="ew", pady=(0, 4))
         self._on_notify_change(self.notify_menu.get())
+        set_entry_text(
+            self.notify_entry,
+            notify_cfg.get("url") or notify_cfg.get("sendkey") or "",
+            "Webhook 地址",
+        )
+
+        self.dry_run_var = ctk.BooleanVar(value=bool(self.app.config.get("dry_run", False)))
+        T.switch(form, "仅演练（不真实点击）", self.dry_run_var).grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=(6, 2)
+        )
 
     # ------------------------------------------------------------ 操作条 / 日志
     def _build_action_bar(self):
@@ -351,7 +407,7 @@ class HomePage(ctk.CTkFrame):
 
         self.log_box = ctk.CTkTextbox(
             card.body,
-            height=116,
+            height=70,
             font=T.mono(11),
             fg_color=T.SURFACE_ALT,
             text_color=T.TEXT,
@@ -369,8 +425,7 @@ class HomePage(ctk.CTkFrame):
         taskset = self.app.taskset
 
         enabled = plan.enabled_keys(taskset)
-        total = len(taskset.tasks)
-        self.tile_tasks.set(f"{len(enabled)}/{total}")
+        self.tile_tasks.set(f"{len(enabled)}/{len(taskset.tasks)}")
 
         flows = taskset.flow_names()
         preferred = plan.flow or self.app.config.get("flow") or (flows[0] if flows else "")
@@ -383,24 +438,26 @@ class HomePage(ctk.CTkFrame):
 
         missing = len(taskset.missing_templates)
         self.tile_templates.set(str(missing), T.WARN if missing else T.SUCCESS)
-
         self.tile_mode.set(self.app.mode_label())
 
-        self.redeem_entry.delete(0, "end")
         variables = dict(self.app.config.get("variables") or {})
         variables.update(plan.variables)
-        self.redeem_entry.insert(0, str(variables.get("redeem_code", "")))
+        set_entry_text(
+            self.redeem_entry,
+            variables.get("redeem_code", ""),
+            "留空不兑换",
+        )
 
         self._render_plan()
+        self._render_points()
+        self._render_templates()
         self._refresh_run_hint(enabled)
 
     def _refresh_run_hint(self, enabled: Optional[List[str]] = None):
         if enabled is None:
             enabled = self.app.plan.enabled_keys(self.app.taskset)
         flow = self._flow_var.get()
-        self.run_hint.configure(
-            text=f"流程 {flow or '—'} · 将执行 {len(enabled)} 个任务"
-        )
+        self.run_hint.configure(text=f"流程 {flow or '—'} · 将执行 {len(enabled)} 个任务")
 
     def _on_notify_change(self, value: str):
         self.notify_entry.configure(

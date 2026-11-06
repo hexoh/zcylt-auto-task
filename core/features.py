@@ -135,12 +135,12 @@ def disabled_reason(config: Optional[dict], group: str, key: str = "") -> str:
     """「这个入口为什么点不动」的一句话说明。"""
     item = feature(config, group, key)
     where = _LOCATION.get((group, key), f"config.json → features.{group}")
-    if not item["enabled"]:
+    if not item["visible"]:
         return (
-            f"「{item['label']}」当前未启用。\n"
-            f"把 {where}.enabled 改成 true 后重启界面即可。"
+            f"「{item['label']}」当前被隐藏（visible=false）。\n"
+            f"把 {where}.visible 改成 true 后重启界面即可。"
         )
     return (
-        f"「{item['label']}」当前被隐藏（visible=false）。\n"
-        f"把 {where}.visible 改成 true 后重启界面即可。"
+        f"「{item['label']}」当前未启用。\n"
+        f"把 {where}.enabled 改成 true 后重启界面即可。"
     )

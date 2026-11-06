@@ -45,6 +45,8 @@
 
 ## 一、界面要求（核心）
 
+> **2026-11-06 改版**：左侧导航栏已删除，任务勾选改为 `task_plan.json` 驱动，ADB / 截屏参数与测试收进「设置页」的两个 Tab。本章保留初版需求原文（`R1`–`R9` 的验收口径不变），现行界面结构与新配置字段见**第十二节**。
+
 界面分为「左侧导航 + 右侧任务区 + 底部日志」三块，一张页面同时承载配置、任务勾选和运行反馈。
 
 ```
@@ -509,6 +511,9 @@
 | `core/logger.py`（双通道：`log()` 写文件/控制台带等级，`ui()` 只推界面中文短句） | R6 | 已实现：界面日志为 `[10:31:07] 收取税收 成功` |
 | `core/devtools.py`（开发者模式判定） | R7 | 已实现 |
 | `ui/`（模式切换、JSON 任务勾选、滚动日志、测试连接、重载、入口按 dev_mode 隐藏） | R1 / R2 / R3 / R6 / R7 | 已实现（入口文案「🎯 任务添加器」） |
+| `ui/app.py` / `home.py` / `settings.py` / `theme.py` / `widgets.py`（改版后的外壳、首页、设置页、设计令牌与通用控件） | R1 / R2 / R3 / R6 / R7 + 十二 | 已实现：无侧栏，顶栏切方案，设置页双 Tab |
+| `core/task_plan.py`（`task_plan.json` 读取 / 生成 / 点位解析） | 十二 · R2 | 已实现 |
+| `core/features.py`（`features` 段：visible / enabled） | 十二 · R1 | 已实现 |
 | 界面上的「点位选择」区（`TaskSet.point_groups()` → 分组 checkbox → `selection` → `config.json` 持久化） | **R4** | 已实现 |
 | `tools/capture.py`（`CaptureSource`：屏幕截取 / ADB 投屏 + 原点换算，picker 与 adder 共用） | 基础 / R9 | 已实现 |
 | `tools/stepkit.py`（纯逻辑：步骤合成、key 生成、模板命名、唯一 step id、步骤摘要，可单测） | R9 | 已实现 |
@@ -543,6 +548,7 @@ python main.py                    # 图形界面
 python main.py check              # 校验 tasks/*.json，列缺失模板
 python main.py run --flow daily   # 命令行跑每日流程
 python main.py run --mode mock    # 演练模式，不真实点击
+python main.py run --plan task_plan.json   # 按界面那份计划跑（开关/点位/流程/变量）
 python main.py run --select reward_rows=r1,r3   # 只点被勾选的点位
 python main.py adder --mode adb   # 任务添加器（开发者）：录任务、生成 tasks/*.json
 
@@ -557,7 +563,7 @@ python -m pytest tests -q         # 单元测试（54 个，全部用合成图�
 2. 填任务名称 → 点 `✨` 生成 key → 选「加入流程」（可空）；
 3. 左侧选类型 → 点「🎯 开始拾取」→ 在画面上点/拖拽；
 4. 录完点「✔ 校验」→「▶ 试运行（演练）」确认能走通 →「💾 保存到 tasks/」；
-5. 回主界面「🔄 重载配置」，勾上任务即可跑。
+5. 回主界面，把 `task_plan.json` 里对应任务改成 `true`（存盘后界面会自动重载），再点「▶ 开始运行」。
 
 ---
 
@@ -581,6 +587,111 @@ python -m pytest tests -q         # 单元测试（54 个，全部用合成图�
 | 2026-10-28 | **R4 收尾**：主界面渲染「点位选择」区（分组 checkbox + 每组全选/全不选 + 已选计数 + 任务未勾选时置灰），选择以 `任务key::步骤id` 存进 `config.json` 并传给执行器；添加器为每段点位列表生成唯一 step id | 1.3、6.4、九、十 |
 | 2026-11-05 | **新增任务级 `step_count`（声明的总步骤数）**：命名任务（`desc`/`key`）+ 声明步数即可定义一条多步骤流程；省略 = 不限；添加器顶部新增「总步数」输入与 `已录 N / M 步` 进度（多了标红、少了标黄），保存前不一致直接拦截，加载整份配置时只警告。执行器仍按 `steps` 实际内容顺序执行，`step_count` 是约束不是逻辑 | 6.1、6.6、8.1、8.2、8.6、九 |
 | 2026-11-05 | **修 `schemas/task_schema.json` 与代码脱节**：`action` 枚举补 `tap_list`，补 `items`/`default_selected`/`max`、`all`/`limit`/`index`、任务级 `step_count`。此前用支持 JSON Schema 的编辑器打开 `tasks/*.json`，`tap_list` 步骤会被误标为非法 | 6.1、6.3、6.4 |
+| 2026-11-06 | **界面改版**：删除左侧导航栏，方案切换移到顶栏；ADB / 截屏的参数与连接测试全部收进「设置页」的两个 Tab；首页任务列表改为渲染 `task_plan.json`（导入 / 编辑 / 自动重载），界面不再打钩；新增 `config.json → features` 控制各入口的显示与启用 | 一（原文加注）、九、**十二** |
+
+## 十二、界面改版（2026-11-06）
+
+### 12.1 现在的样子
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ 🏯 这城有良田          [模拟器] [屏幕截取·未启用]      ● 空闲 ⋯ ⚙设置 │
+├──────────────────────────────────────────────────────────────────────┤
+│ 15/15 启用   daily 流程   36 缺失模板   模拟器 运行方案                │
+│ ┌ 任务计划 ─────────────────────┐  ┌ 运行选项 ─────────────────────┐ │
+│ │ task_plan.json  [导入][编辑][重载]│  │ 流程 / 兑换码 / 通知 / 演练    │ │
+│ │ ● 关闭弹窗 closePopups  启用   │  └───────────────────────────────┘ │
+│ │ ● 返回主城 backHome     启用   │  ┌ 模板图 ───────────────────────┐ │
+│ │ …（15 个任务，两列）           │  │ 缺失 36 张，如 … 用添加器补拍  │ │
+│ └────────────────────────────────┘  └───────────────────────────────┘ │
+│ [▶ 开始运行] [■ 停止]                     流程 daily · 将执行 15 个任务 │
+│ ┌ 运行日志 ───────────────────────────────────────────────────────┐  │
+│ │ [10:31:02] 收取税收 成功                                        │  │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+设置页（顶栏「⚙ 设置」进入，顶栏按钮变成「← 返回首页」）：
+
+```
+设置                                     [打开 config.json]
+[ 模拟器 ] [ 屏幕截取 ]
+┌ 连接参数 ────────────────────────────────────────────┐
+│ ADB 路径 / 设备地址 / 分辨率                          │
+┌ 连接测试 ────────────────────────────────────────────┐
+│ [测试连接] [保存设置]            状态：尚未测试        │
+│   （测试结果条）                                      │
+│   （预览画面：抓到的这一帧，顺便确认分辨率）            │
+└──────────────────────────────────────────────────────┘
+```
+
+### 12.2 代码结构（谁负责什么）
+
+| 文件 | 职责 |
+|---|---|
+| `ui/app.py` | 窗口外壳：顶栏（品牌 / 方案切换 / 状态 / ⋯ 更多 / 设置）、页面容器（home / settings）、事件队列、配置文件落盘、计划导入与监听 |
+| `ui/home.py` | 首页：概览数字、任务计划卡（只读渲染 + 导入/编辑/重载）、运行选项、开始/停止、日志 |
+| `ui/settings.py` | 设置页：按 `features.modes` 生成 Tab，每个 Tab 内「连接参数 + 连接测试 + 预览」 |
+| `ui/theme.py` | 设计令牌：颜色（浅/深两套）、字号刻度、间距、按钮/输入框/开关工厂 |
+| `ui/widgets.py` | 通用控件：`Card` / `StatTile` / `Banner` / `Tag` / `ModeSwitcher` / `set_entry_text` |
+| `core/task_plan.py` | `task_plan.json` 的读取、校验、生成、点位解析（`chosen_points` / `point_stats`） |
+| `core/features.py` | `config.json → features` 的合并与查询（`modes` / `is_visible` / `is_enabled` / `resolve_mode` / `disabled_reason`） |
+| `ui/pages.py` | **已删除**（原「方案页」并入 home + settings） |
+
+### 12.3 `config.json → features`：界面入口开关
+
+```jsonc
+"features": {
+  "modes": {                      // 运行方案：顶栏切换器 + 设置页 Tab
+    "adb":    { "label": "模拟器",   "hint": "Android ADB", "visible": true,  "enabled": true  },
+    "screen": { "label": "屏幕截取", "hint": "截屏 + 模拟键鼠", "visible": true, "enabled": false }
+  },
+  "tools": {                      // 顶栏「⋯」菜单
+    "reload":    { "label": "重载任务配置", "visible": true, "enabled": true },
+    "templates": { "label": "打开模板目录", "visible": true, "enabled": true },
+    "logs":      { "label": "打开日志目录", "visible": true, "enabled": true },
+    "adder":     { "label": "任务添加器（开发者）", "visible": true, "enabled": true }
+  },
+  "settings": { "label": "设置", "visible": true, "enabled": true }
+}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `visible` | `false` = **不渲染**该入口（界面上完全看不到）。用于「这个版本不开放」 |
+| `enabled` | `false` = 渲染但**不可用**（灰着；点了弹窗说明改哪个键）。用于「功能在但不开放」 |
+| `label` / `hint` | 顶栏切换器文案 / 设置页 Tab 与说明里的副标题，可随意改中文名 |
+
+- `enabled=false` 的方案**不能被选中运行**：`build_run_config()` 会拒绝并提示。
+- 默认只有 `adb` 是 `enabled`；`screen` 可见但关闭，方便随时打开。
+- `tools.adder` 还要额外过 `dev_mode`（`core/devtools.py`），两道闸都开才出现。
+- 改完 `config.json` 需重启界面（界面只在启动时读一次 features）。
+
+### 12.4 `task_plan.json`：这次跑哪些任务
+
+首页「任务计划」卡片读的就是这份文件，**界面不保存勾选状态**，所以文件和界面永远一致。
+
+| 字段 | 含义 |
+|---|---|
+| `version` | 固定 `1` |
+| `tasks_path` | 任务定义文件或目录；空字符串 = 用 `config.json` 的 `tasks_path`（默认 `tasks`） |
+| `flow` | 默认流程名；空 = 用 `config.json` 的 `flow` |
+| `dry_run` | `true/false` 强制演练；`null` = 由首页「仅演练」开关决定 |
+| `tasks` | `{ "任务key": true/false }`；也接受 `{ "任务key": { "enabled": false } }`。**没写的任务**沿用 `tasks/*.json` 里那个任务自己的 `enabled` |
+| `points` | `{ "任务key::步骤id": ["点位id", …] }`，控制 `tap_list` 点哪几个；留空 = 按步骤的 `default_selected` |
+| `variables` | 运行时变量（如 `redeem_code`），会覆盖 `config.json → variables` |
+
+行为约定：
+
+- 启动时文件不存在 → 按当前任务定义**自动生成一份**（全部 `true`）并写回磁盘。
+- 用编辑器改完存盘 → 界面 1.5 秒内检测到 mtime 变化并**自动重载**（任务执行中不重载，避免半路换计划）。
+- 卡片上的「导入」= 选任意 JSON 作为当前计划（路径记进 `config.json → plan_path`）；「编辑 JSON」= 用系统默认编辑器打开；「重新载入」= 手动重读。
+- 计划里出现任务定义中不存在的 key（改过名字）→ 卡片顶部黄色提示，不会静默忽略。
+- 执行顺序仍由 `flow` 决定，`tasks` 只决定「跑不跑」；点了 `true` 但不在流程里的任务，排在流程之后补跑（沿用 R3 口径）。
+- 命令行也能吃这份计划：`python main.py run --plan task_plan.json`。显式参数（`--tasks` / `--flow` / `--var` / `--select`）优先，没给的才从计划里取。
+
+### 12.5 为什么不在界面上打钩了
+
+打钩本质是「一份运行参数」，存界面状态就得回答「存哪、谁覆盖谁」：`config.json` 一份、界面内存一份、`tasks/*.json` 的 `enabled` 又一份，三者迟早对不上。现在这份状态只有一处——`task_plan.json`，界面只做渲染。改 JSON 和点按钮等价，但只有一处真相。
 
 ### 交接提示（给未来的我）
 
@@ -588,6 +699,7 @@ python -m pytest tests -q         # 单元测试（54 个，全部用合成图�
 2. 任何 UI 改动都不能破坏 R1–R9，尤其 R3（勾了必须有反应）、R4（没勾的不能误点）、R9（录入必须能一步到位，不能又退化成手写坐标）。
 3. 任务 JSON 的坐标一律 `rel1000`，不要写死像素；模板图必须来自与运行后端同源的截图。
 4. 发布前确认三件事：`config.json` 没有 `dev_mode: true`、环境没有 `ZCYL_DEV`、`tasks/` 与 `templates/` 成对交付。
-5. 职责别串：**任务添加器只负责录入 + 存 JSON**，执行器只负责跑，主界面只负责选/勾/看日志。
+5. 职责别串：**任务添加器只负责录入 + 存 JSON**，执行器只负责跑，主界面只负责「读计划、看状态、看日志」。
 6. 「坐标拾取器」这个词已经废弃，代码里如还留着 `picker`，一律视为任务添加器的取景内核，别再加新功能进去。
+7. 界面状态只有一处真相：任务开关与点位在 `task_plan.json`，后端参数在 `config.json → adb/screen`，入口显隐在 `config.json → features`。想再往界面里加「临时勾选」，先想清楚它和这三处怎么对齐，想不清楚就别加。
 

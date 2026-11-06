@@ -10,14 +10,20 @@ import json
 import os
 from typing import Optional
 
+from .features import FEATURE_DEFAULTS
+
 DEFAULT_CONFIG = {
     "mode": "adb",
     "tasks_path": "tasks",
+    # 任务计划：控制哪些任务启用、点位怎么选（见 core/task_plan.py）
+    "plan_path": "task_plan.json",
     "flow": "daily",
     "repeat": 1,
     "dry_run": False,
     # None = 自动（源码运行开、打包版关）；true/false 强制开关
     "dev_mode": None,
+    # 界面入口开关：visible=是否显示，enabled=是否可用（见 core/features.py）
+    "features": copy.deepcopy(FEATURE_DEFAULTS),
     "adb": {
         "adb_path": "",
         "device": "127.0.0.1:7555",
@@ -31,7 +37,7 @@ DEFAULT_CONFIG = {
     },
     "variables": {"redeem_code": ""},
     "notify": {"type": "none", "url": "", "sendkey": ""},
-    # 点位勾选：{"任务key::步骤id": ["r1", "r3"]}，界面勾选后自动回填
+    # 兼容旧配置：点位勾选曾存在这里，现在由 task_plan.json 的 points 接管
     "selection": {},
 }
 

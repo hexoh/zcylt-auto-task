@@ -52,7 +52,8 @@ class Card(ctk.CTkFrame):
                     text_color=T.TEXT_MUTED,
                     anchor="w",
                 ).pack(side="left", padx=(10, 0), pady=(2, 0))
-            self.actions = ctk.CTkFrame(head, fg_color="transparent")
+            # 空容器也要给 1x1：CTkFrame 默认 200x200，空着会把标题栏撑成 200 高
+            self.actions = ctk.CTkFrame(head, fg_color="transparent", width=1, height=1)
             self.actions.pack(side="right")
 
         self.body = ctk.CTkFrame(self, fg_color="transparent")
@@ -72,7 +73,7 @@ class StatTile(ctk.CTkFrame):
         options.update(kwargs)
         super().__init__(master, **options)
         inner = ctk.CTkFrame(self, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=14, pady=(11, 10))
+        inner.pack(fill="both", expand=True, padx=14, pady=(8, 7))
         self._value = ctk.CTkLabel(
             inner,
             text=value,
@@ -106,34 +107,44 @@ class Banner(ctk.CTkFrame):
         "success": (T.SUCCESS_SOFT, T.SUCCESS, "✓"),
     }
 
-    def __init__(self, master, text: str = "", kind: str = "info", wraplength: int = 720):
-        tone, self._fg_color, glyph = self._TONES.get(kind, self._TONES["info"])
+    def __init__(self, master, text: str = "", kind: str = "info", wraplength: int = 0):
+        tone, ink, glyph = self._TONES.get(kind, self._TONES["info"])
         super().__init__(master, fg_color=tone, corner_radius=8)
+        # 注意别用 _fg_color 这类 CTk 内部属性名存自己的颜色，会把控件底色改掉
+        self._tone = tone
+        self._ink = ink
         self._glyph = ctk.CTkLabel(
             self,
             text=glyph,
-            width=18,
+            width=16,
             font=T.font(T.SIZE_SMALL, "bold"),
-            text_color=self._fg_color,
+            text_color=ink,
         )
         self._glyph.pack(side="left", padx=(10, 0), pady=7, anchor="n")
         self._label = ctk.CTkLabel(
             self,
             text=text,
             font=T.font(T.SIZE_SMALL),
-            text_color=self._fg_color,
+            text_color=ink,
             justify="left",
             anchor="w",
             wraplength=wraplength,
         )
         self._label.pack(side="left", padx=(6, 12), pady=7, fill="x", expand=True)
+        # 宽度变化时重算换行宽度，窄栏里也不会把文字裁掉
+        self.bind("<Configure>", self._on_resize)
+
+    def _on_resize(self, event):
+        wrap = max(160, event.width - 56)
+        if wrap != self._label.cget("wraplength"):
+            self._label.configure(wraplength=wrap)
 
     def set_text(self, text: str, kind: Optional[str] = None):
         if kind and kind in self._TONES:
-            tone, self._fg_color, glyph = self._TONES[kind]
-            self.configure(fg_color=tone)
-            self._glyph.configure(text=glyph, text_color=self._fg_color)
-            self._label.configure(text_color=self._fg_color)
+            self._tone, self._ink, glyph = self._TONES[kind]
+            self.configure(fg_color=self._tone)
+            self._glyph.configure(text=glyph, text_color=self._ink)
+            self._label.configure(text_color=self._ink)
         self._label.configure(text=text)
 
 
@@ -241,3 +252,23 @@ def hint_label(master, text: str, wraplength: int = 420) -> ctk.CTkLabel:
         justify="left",
         wraplength=wraplength,
     )
+
+
+def set_entry_text(widget: ctk.CTkEntry, value, placeholder: str = "") -> None:
+    """往 CTkEntry 里写值。
+
+    坑：直接 ``delete`` 再 ``insert("")`` 会让 placeholder 失效（CTk 只有在输入框
+    没获焦时才重新贴 placeholder），表现出来就是「空输入框连提示都没有」。
+    所以值没变就什么都不做，值清空后重新配一次 placeholder 把它唤回来。
+    """
+    text = "" if value is None else str(value)
+    try:
+        if text == widget.get():
+            return
+    except Exception:
+        pass
+    widget.delete(0, "end")
+    if text:
+        widget.insert(0, text)
+    elif placeholder:
+        widget.configure(placeholder_text=placeholder)

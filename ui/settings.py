@@ -1,7 +1,7 @@
 """设置页：ADB 与屏幕截取的参数、连接测试都在这里。
 
 以前这些表单分散在两个「方案页」上，切方案等于切整页，改一个路径要先切回去。
-现在收敛成一页两个 Tab，参数、测试、保存结果互不打架；首页只负责跑。
+现在收敛成一页两个 Tab，参数、测试、预览互不打架；首页只负责跑。
 """
 
 from __future__ import annotations
@@ -13,15 +13,25 @@ from typing import Dict, List, Optional
 
 import customtkinter as ctk
 
-from core.features import feature, is_enabled
+from core.features import feature
 from core.task_manager import probe
 from ui import theme as T
-from ui.widgets import Banner, Card, form_row
+from ui.widgets import Banner, Card, form_row, set_entry_text
 
 CAPTURE_LABELS = {"mss（快速）": "mss", "PIL（兼容）": "pil"}
 CAPTURE_KEYS = {value: label for label, value in CAPTURE_LABELS.items()}
 
 TAB_ORDER = ("adb", "screen")
+
+PARAMS_HINT = {
+    "adb": "Android ADB · 留空用系统 PATH 里的 adb",
+    "screen": "截屏 + 模拟键鼠 · 先填窗口标题，找不到窗口时改用固定区域",
+}
+
+CONFIG_NOTE = {
+    "adb": "参数保存在 config.json 的 adb 段（adb_path / device / resolution），运行与测试都读这里的值。",
+    "screen": "参数保存在 config.json 的 screen 段（window_title / capture_mode / region / follow_window）。",
+}
 
 
 class SettingsPage(ctk.CTkFrame):
@@ -58,9 +68,6 @@ class SettingsPage(ctk.CTkFrame):
         T.ghost(actions, "打开 config.json", self.app.open_config_file, height=34, width=126).pack(
             side="left"
         )
-        T.ghost(actions, "←  返回首页", self.app.show_home, height=34, width=112).pack(
-            side="left", padx=(T.GAP_SM, 0)
-        )
 
         self.tabs = ctk.CTkTabview(
             self,
@@ -83,7 +90,7 @@ class SettingsPage(ctk.CTkFrame):
             item = feature(self.app.config, "modes", mode)
             if not item["visible"]:
                 continue
-            name = self._tab_name(mode, item)
+            name = item["label"]
             self.tabs.add(name)
             self._build_tab(self.tabs.tab(name), mode, item)
 
@@ -91,52 +98,47 @@ class SettingsPage(ctk.CTkFrame):
         if first:
             self.tabs.set(first)
 
-    @staticmethod
-    def _tab_name(mode: str, item: dict) -> str:
-        hint = item.get("hint") or ""
-        return f"{item.get('label', mode)} · {hint}" if hint else item.get("label", mode)
-
     def _tab_page(self, mode: str) -> Optional[ctk.CTkFrame]:
         item = feature(self.app.config, "modes", mode)
         if not item["visible"]:
             return None
-        return self.tabs.tab(self._tab_name(mode, item))
+        return self.tabs.tab(item["label"])
 
     # ------------------------------------------------------------------ 单个 Tab
     def _build_tab(self, page: ctk.CTkFrame, mode: str, item: dict):
-        scroll = ctk.CTkScrollableFrame(
+        wrap = ctk.CTkScrollableFrame(
             page,
             fg_color="transparent",
             scrollbar_button_color=T.BORDER_STRONG,
             scrollbar_button_hover_color=T.NEUTRAL,
         )
-        scroll.pack(fill="both", expand=True, padx=2, pady=2)
+        wrap.pack(fill="both", expand=True, padx=2, pady=2)
 
         enabled = bool(item["enabled"])
         if not enabled:
             Banner(
-                scroll,
+                wrap,
                 f"「{item['label']}」当前未启用，无法用于运行。"
                 f"把 config.json → features.modes.{mode}.enabled 改成 true 并重启界面即可。",
                 "warn",
-            ).pack(fill="x", padx=6, pady=(4, T.GAP_SM))
+            ).pack(fill="x", padx=6, pady=(6, T.GAP_MD))
 
-        params = Card(scroll, "连接参数", self._params_hint(mode))
+        params = Card(wrap, "连接参数", PARAMS_HINT.get(mode, ""))
         params.pack(fill="x", padx=6, pady=(0, T.GAP_MD))
         entries: Dict[str, ctk.CTkEntry] = {}
         variables: Dict[str, ctk.Variable] = {}
         self._build_fields(params.body, mode, entries, variables)
 
-        test_card = Card(scroll, "连接测试", "连一次后端并抓一帧，确认路径 / 窗口 / 分辨率是否对得上")
+        test_card = Card(wrap, "连接测试", "连一次后端并抓一帧，确认路径 / 窗口 / 分辨率是否对得上")
         test_card.pack(fill="x", padx=6, pady=(0, T.GAP_MD))
 
         buttons = ctk.CTkFrame(test_card.body, fg_color="transparent")
         buttons.pack(fill="x")
         test_btn = T.ghost(
             buttons,
-            "🔌  测试连接",
+            "测试连接",
             lambda: self._run_probe(mode),
-            width=118,
+            width=104,
             height=34,
             state="normal" if enabled else "disabled",
         )
@@ -154,7 +156,28 @@ class SettingsPage(ctk.CTkFrame):
         status.pack(side="right")
 
         banner = Banner(test_card.body, "", "info")
-        preview = ctk.CTkLabel(test_card.body, text="", image=None)
+
+        preview = ctk.CTkFrame(test_card.body, fg_color=T.SURFACE_ALT, corner_radius=8, height=148)
+        preview.pack(fill="x", pady=(T.GAP_MD, 0))
+        preview.pack_propagate(False)
+        preview_hint = ctk.CTkLabel(
+            preview,
+            text="测试通过后，这里显示抓取到的画面（顺便确认分辨率）",
+            font=T.font(T.SIZE_SMALL),
+            text_color=T.TEXT_FAINT,
+        )
+        preview_hint.place(relx=0.5, rely=0.5, anchor="center")
+        preview_image = ctk.CTkLabel(preview, text="", image=None)
+        preview_image.pack(expand=True)
+
+        ctk.CTkLabel(
+            wrap,
+            text=CONFIG_NOTE.get(mode, ""),
+            font=T.font(T.SIZE_TINY),
+            text_color=T.TEXT_FAINT,
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=10, pady=(0, 8))
 
         self._ui[mode] = {
             "entries": entries,
@@ -162,20 +185,19 @@ class SettingsPage(ctk.CTkFrame):
             "test_btn": test_btn,
             "status": status,
             "banner": banner,
-            "preview": preview,
+            "preview": preview_image,
+            "preview_hint": preview_hint,
             "enabled": enabled,
         }
         self.sync_from_config(mode)
 
-    @staticmethod
-    def _params_hint(mode: str) -> str:
-        return (
-            "留空用系统 PATH 里的 adb；模拟器一般填 127.0.0.1:7555"
-            if mode == "adb"
-            else "先填窗口标题；找不到窗口时改用固定区域"
-        )
-
-    def _build_fields(self, body, mode: str, entries: Dict[str, ctk.CTkEntry], variables: Dict[str, ctk.Variable]):
+    def _build_fields(
+        self,
+        body,
+        mode: str,
+        entries: Dict[str, ctk.CTkEntry],
+        variables: Dict[str, ctk.Variable],
+    ):
         if mode == "adb":
             row = form_row(body, "ADB 路径")
             entries["adb_path"] = T.entry(row, placeholder_text="留空用系统 PATH，或填完整路径")
@@ -202,8 +224,7 @@ class SettingsPage(ctk.CTkFrame):
 
         row = form_row(body, "采集模式")
         variables["capture_mode"] = ctk.StringVar(value=list(CAPTURE_LABELS)[0])
-        menu = T.option_menu(row, list(CAPTURE_LABELS), variables["capture_mode"], width=150)
-        menu.pack(side="left")
+        T.option_menu(row, list(CAPTURE_LABELS), variables["capture_mode"], width=150).pack(side="left")
         ctk.CTkLabel(
             row,
             text="mss 更快；出现花屏 / 黑屏时换 PIL",
@@ -235,18 +256,19 @@ class SettingsPage(ctk.CTkFrame):
                 continue
             cfg = self.app.config.get(name) or {}
             entries = ui["entries"]
-            if "adb_path" in entries:
-                _set_entry(entries["adb_path"], cfg.get("adb_path", ""))
-            if "device" in entries:
-                _set_entry(entries["device"], cfg.get("device", ""))
-            if "resolution" in entries:
-                _set_entry(entries["resolution"], cfg.get("resolution", ""))
-            if "window_title" in entries:
-                _set_entry(entries["window_title"], cfg.get("window_title", ""))
-            if "region" in entries:
-                region = cfg.get("region")
-                text = ",".join(str(v) for v in region) if isinstance(region, (list, tuple)) else ""
-                _set_entry(entries["region"], text)
+            for field, widget in entries.items():
+                if field == "region":
+                    region = cfg.get("region")
+                    text = ",".join(str(v) for v in region) if isinstance(region, (list, tuple)) else ""
+                    set_entry_text(widget, text, "x,y,w,h（可选，优先于窗口标题）")
+                elif field == "window_title":
+                    set_entry_text(widget, cfg.get("window_title", ""), "这城有良田 / WeChat")
+                elif field == "adb_path":
+                    set_entry_text(widget, cfg.get("adb_path", ""), "留空用系统 PATH，或填完整路径")
+                elif field == "device":
+                    set_entry_text(widget, cfg.get("device", ""), "127.0.0.1:7555（MuMu）")
+                elif field == "resolution":
+                    set_entry_text(widget, cfg.get("resolution", ""), "留空自动获取")
             if "capture_mode" in ui["variables"]:
                 ui["variables"]["capture_mode"].set(
                     CAPTURE_KEYS.get(str(cfg.get("capture_mode") or "mss"), list(CAPTURE_LABELS)[0])
@@ -273,9 +295,7 @@ class SettingsPage(ctk.CTkFrame):
                 region = [int(part) for part in parts]
         return {
             "window_title": entries["window_title"].get().strip(),
-            "capture_mode": CAPTURE_LABELS.get(
-                ui["variables"]["capture_mode"].get(), "mss"
-            ),
+            "capture_mode": CAPTURE_LABELS.get(ui["variables"]["capture_mode"].get(), "mss"),
             "region": region,
             "follow_window": bool(ui["variables"]["follow_window"].get()),
         }
@@ -302,7 +322,7 @@ class SettingsPage(ctk.CTkFrame):
         ui["test_btn"].configure(state="disabled")
         ui["status"].configure(text="正在连接…", text_color=T.ACCENT)
         ui["banner"].pack_forget()
-        ui["preview"].pack_forget()
+        ui["preview_hint"].configure(text="正在抓取画面…")
 
         backend = self.collect_backend(mode)
 
@@ -325,7 +345,7 @@ class SettingsPage(ctk.CTkFrame):
             self._result_queue.put((mode, ok, message, path))
 
         threading.Thread(target=worker, daemon=True, name="zcylt-probe").start()
-        self.after(120, self._poll_probe)
+        self._schedule(120, self._poll_probe)
 
     def _poll_probe(self):
         if not self._alive:
@@ -333,7 +353,7 @@ class SettingsPage(ctk.CTkFrame):
         try:
             mode, ok, message, path = self._result_queue.get_nowait()
         except queue.Empty:
-            self.after(120, self._poll_probe)
+            self._schedule(120, self._poll_probe)
             return
         self._show_probe_result(mode, ok, message, path)
 
@@ -347,32 +367,38 @@ class SettingsPage(ctk.CTkFrame):
             text_color=T.SUCCESS if ok else T.DANGER,
         )
         ui["banner"].set_text(message, "success" if ok else "error")
-        ui["banner"].pack(fill="x", pady=(T.GAP_MD, 0))
+        ui["banner"].pack(fill="x", pady=(T.GAP_MD, 0), before=ui["preview_hint"].master)
         if ok and path:
-            self._show_preview(ui["preview"], path)
+            self._show_preview(ui, path)
+        else:
+            ui["preview_hint"].configure(text="测试失败，没有画面可预览")
 
     @staticmethod
-    def _show_preview(label: ctk.CTkLabel, path: str):
+    def _show_preview(ui: dict, path: str):
         """抓到的帧缩一张小图，直观确认「框到的画面对不对」。"""
         try:
             from PIL import Image
 
             image = Image.open(path)
-            max_w, max_h = 360, 200
+            max_w, max_h = 620, 140
             scale = min(max_w / image.width, max_h / image.height, 1.0)
             size = (max(1, int(image.width * scale)), max(1, int(image.height * scale)))
             image = image.resize(size, Image.LANCZOS)
             ctk_image = ctk.CTkImage(light_image=image, dark_image=image, size=size)
-            label.configure(image=ctk_image, text="")
-            label.image = ctk_image  # 必须留引用，否则被 GC 掉
-            label.pack(anchor="w", pady=(T.GAP_MD, 0))
+            ui["preview"].configure(image=ctk_image, text="")
+            ui["preview"].image = ctk_image  # 必须留引用，否则被 GC 掉
+            ui["preview_hint"].place_forget()
         except Exception:
-            label.pack_forget()
+            ui["preview_hint"].configure(text="画面读取失败，详情见日志文件")
+
+    def _schedule(self, delay_ms: int, callback):
+        try:
+            self.after(delay_ms, callback)
+        except Exception:
+            pass
 
     def _on_destroy(self, _event=None):
         self._alive = False
 
 
-def _set_entry(widget: ctk.CTkEntry, value) -> None:
-    widget.delete(0, "end")
-    widget.insert(0, "" if value is None else str(value))
+

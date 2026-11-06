@@ -2,6 +2,7 @@
 
     python main.py                          # 打开图形界面
     python main.py run --flow daily         # 命令行跑一遍每日流程
+    python main.py run --plan task_plan.json  # 按界面那份计划跑（开关/点位/流程都读它）
     python main.py run --mode mock          # 演练模式（不真实点击）
     python main.py check                    # 校验 tasks/*.json，列出缺失模板
     python main.py adder --mode adb         # 任务添加器（录任务、生成 JSON）
@@ -85,11 +86,28 @@ def cmd_run(args) -> int:
     from core.logger import Logger
     from core.notifier import Notifier
     from core.runner import Runner
+    from core.task_plan import load_plan
     from core.task_schema import load_tasks
     from core.vision import TemplateMatcher
 
     logger = Logger(log_dir=os.path.join(ROOT, "logs"), level=args.log_level)
-    path = args.json or os.path.join(ROOT, "tasks")
+
+    # --plan 只是「可选的一份运行计划」：命令行显式给的参数永远优先，
+    # 没给的（任务开关 / 点位 / 流程 / 变量）才从计划里取。
+    plan = None
+    if args.plan:
+        plan = load_plan(args.plan)
+        if plan.error:
+            logger.error(f"计划文件无法使用：{plan.error}")
+            return 1
+        if not plan.exists:
+            logger.error(f"计划文件不存在：{args.plan}")
+            return 1
+
+    json_path = args.json or (plan.tasks_path if plan and plan.tasks_path else "")
+    path = json_path or os.path.join(ROOT, "tasks")
+    if json_path and not os.path.isabs(path):
+        path = os.path.join(ROOT, path)
     try:
         taskset = load_tasks(path, base_dir=ROOT, logger=logger)
     except TaskSchemaError as exc:
@@ -110,13 +128,23 @@ def cmd_run(args) -> int:
     selected = None
     if args.tasks:
         selected = [t.strip() for t in args.tasks.split(",") if t.strip()]
+    elif plan is not None:
+        selected = plan.enabled_keys(taskset)
+        logger.info(f"按计划启用 {len(selected)} 个任务：{args.plan}")
+    if selected is not None:
         unknown = [t for t in selected if t not in taskset.tasks]
         if unknown:
             logger.error(f"未知任务：{', '.join(unknown)}")
             return 1
 
+    flows = list(args.flow or [])
+    if not flows and plan is not None and plan.flow:
+        flows = [plan.flow]
+    if not flows:
+        flows = ["daily"]
+
     flow_keys = []
-    for flow in args.flow:
+    for flow in flows:
         try:
             flow_keys.extend(taskset.resolve_flow(flow, enabled=selected))
         except KeyError as exc:
@@ -125,6 +153,11 @@ def cmd_run(args) -> int:
     if not flow_keys:
         logger.error("没有可执行的任务")
         return 1
+
+    variables = dict(plan.variables) if plan is not None else {}
+    variables.update(_parse_vars(args.var))
+    selection = dict(plan.selection()) if plan is not None else {}
+    selection.update(_parse_selection(args.select))
 
     stop_event = threading.Event()
     report = None
@@ -137,8 +170,8 @@ def cmd_run(args) -> int:
             logger=logger,
             matcher=TemplateMatcher(threshold=float(taskset.defaults.get("threshold", 0.85))),
             stop_event=stop_event,
-            variables=_parse_vars(args.var),
-            selection=_parse_selection(args.select),
+            variables=variables,
+            selection=selection,
         )
         for _ in range(max(1, args.repeat)):
             report = runner.run(flow_keys)
@@ -213,6 +246,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--flow", action="append", default=None, help="流程名，可重复；默认 daily")
     run.add_argument("--tasks", default="", help="只跑这些任务 key，逗号分隔")
     run.add_argument("--json", default="", help="任务文件或目录，默认 tasks/")
+    run.add_argument(
+        "--plan",
+        default="",
+        help="任务计划 JSON（如 task_plan.json）：任务开关 / 点位 / 流程 / 变量都从它取，显式参数优先",
+    )
     run.add_argument("--mode", choices=["adb", "screen"], default="adb")
     run.add_argument("--dry-run", action="store_true", help="演练模式，不真实点击")
     run.add_argument("--adb", default="", help="adb 路径")
@@ -275,8 +313,8 @@ def main(argv=None) -> int:
     if args.cmd not in handlers:
         parser.print_help()
         return 1
-    if args.cmd == "run" and not args.flow:
-        args.flow = ["daily"]
+    if args.cmd == "run" and args.flow is None:
+        args.flow = []
     return handlers[args.cmd](args)
 
 
